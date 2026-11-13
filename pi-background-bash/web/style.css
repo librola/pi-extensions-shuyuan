@@ -14,10 +14,10 @@
 .pbb-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pbb-dropdown .pbb-list { max-height: 360px; }
 .pbb-dropdown .pbb-output pre { max-height: 300px; min-height: 96px; }
-.pbb-panel button, .pbb-card button, .pbb-toolbar { color: var(--text); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
-.pbb-panel button:hover, .pbb-card button:hover, .pbb-toolbar:hover { background: var(--bg-hover); }
+.pbb-panel button, .pbb-toolbar { color: var(--text); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+.pbb-panel button:hover, .pbb-toolbar:hover { background: var(--bg-hover); }
 .pbb-panel button:disabled { opacity: .5; cursor: default; }
-.pbb-panel button:focus-visible, .pbb-card button:focus-visible, .pbb-toolbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pbb-panel button:focus-visible, .pbb-toolbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pbb-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
 .pbb-muted { color: var(--text-muted); font-size: 12px; margin: 8px 0; overflow-wrap: anywhere; }
 .pbb-error { color: var(--accent); border-left: 3px solid var(--accent); padding-left: 8px; overflow-wrap: anywhere; }
@@ -36,5 +36,4 @@
 .pbb-confirm { border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-panel); padding: 10px; margin-top: 12px; }
 .pbb-confirm code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); margin-bottom: 8px; }
 .pbb-card { border-left: 2px solid var(--accent); padding: 8px; margin: 4px 0; font-size: 12px; }
-.pbb-card button { margin: 8px 0; }
 @media (max-width: 700px) { .pbb-layout { grid-template-columns: minmax(0, 1fr); } .pbb-list, .pbb-dropdown .pbb-list { max-height: 28vh; } .pbb-output pre, .pbb-dropdown .pbb-output pre { max-height: 24vh; } .pbb-panel { padding: 8px; } }

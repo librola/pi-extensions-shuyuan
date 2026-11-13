@@ -201,30 +201,21 @@ export function activate(host) {
   }
 
   const dropdown = createDropdown(React, Tasks);
-  /** @param {{ context: import('./api.d.ts').ViewContext }} props */
-  function OpenTasksButton({ context }) {
-    const [error, setError] = React.useState("");
-    return h(React.Fragment, null,
-      h("button", { type: "button", onClick: () => {
-        if (!dropdown.open(context)) setError("请先切换到任务所属会话，再从顶部工具栏打开后台任务。");
-      } }, "查看后台任务"),
-      error ? h("p", { role: "alert" }, error) : null);
-  }
 
   /** @param {import('./api.d.ts').ToolProps} props */
-  function ToolCard({ result, context, defaultView }) {
+  function ToolCard({ result, defaultView }) {
     const jobs = jobsFromDetails(result?.details);
     return h("section", { className: "pbb-card", "data-pbb": "tool" },
       jobs.slice(0, 3).map(job => h("div", { key: job.id }, h("strong", null, job.id), " · ", statusLabel({ job, origin: "history" }))),
-      h(OpenTasksButton, { context }), defaultView);
+      defaultView);
   }
   /** @param {import('./api.d.ts').MessageProps} props */
-  function CompletionCard({ message, context, defaultView }) {
+  function CompletionCard({ message, defaultView }) {
     const job = jobsFromDetails(message.details)[0];
     return h("section", { className: "pbb-card", "data-pbb": "completion" },
       h("strong", null, job ? `${job.id} · ${statusLabel({ job, origin: "history" })}` : "后台任务完成"),
       job ? h("p", null, `${durationLabel(job)}${job.exit_code !== undefined ? ` · 退出码 ${job.exit_code}` : ""}`) : null,
-      h(OpenTasksButton, { context }), defaultView);
+      defaultView);
   }
 
   disposers.push(host.registerToolbarItem({ id: "jobs", title: "后台 Bash 任务", component: dropdown.component }));

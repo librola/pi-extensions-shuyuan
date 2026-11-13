@@ -56,8 +56,12 @@ test("Web 注册只占顶部下拉入口，不注册侧栏面板，注册和样�
   const registrations = new Map<string, any>();
   let removedRegistrations = 0;
   const register = (kind: string) => (value: any) => { registrations.set(kind, value); return () => { removedRegistrations++; }; };
+  const react = {
+    createElement: (type: any, props: any, ...children: any[]): any => typeof type === "function" ? type({ ...props, children }) : { type, props, children },
+    useState: (initial: any) => [initial, () => {}],
+  };
   const host = {
-    apiVersion: 1, react: {}, extension: { assetBaseUrl: "/approved/" },
+    apiVersion: 1, react, extension: { assetBaseUrl: "/approved/" },
     registerPanel: register("panel"), registerToolbarItem: register("toolbar"),
     registerToolRenderer: register("tool"), registerMessageRenderer: register("message"), registerWebCommand: register("command"),
   } as unknown as WebHost;
@@ -68,6 +72,14 @@ test("Web 注册只占顶部下拉入口，不注册侧栏面板，注册和样�
   assert.ok(!registrations.has("panel"));
   assert.equal(registrations.get("command").name, "bash-jobs");
   assert.throws(() => registrations.get("command").run({ context: {} }), /尚未就绪/);
+  const nativeView = react.createElement("button", { id: "native-copy" }, "Copy");
+  const buttons = (node: any): any[] => Array.isArray(node) ? node.flatMap(buttons) : node && typeof node === "object"
+    ? [...(node.type === "button" ? [node] : []), ...(node.children ?? []).flatMap(buttons)] : [];
+  const context = { sessionId: "own-session", signal: new AbortController().signal };
+  const toolCard = registrations.get("tool").component({ result: { details: { format: JOB_FORMAT, job } }, context, defaultView: nativeView });
+  const completionCard = registrations.get("message").component({ message: { details: { ...job, format: JOB_FORMAT, status: "completed", ended_at: 200 } }, context, defaultView: nativeView });
+  assert.deepEqual(buttons(toolCard), [nativeView], "工具输出不能额外添加打开顶栏的按钮，原生按钮仍保留");
+  assert.deepEqual(buttons(completionCard), [nativeView], "完成消息也不添加重复入口");
   remove();
   assert.equal(removedRegistrations, 4);
   assert.equal(removedStyles, 1);

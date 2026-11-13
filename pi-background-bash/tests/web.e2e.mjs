@@ -289,6 +289,7 @@ try {
   }
   const completed = (await action(first.getSessionId(), "list")).jobs.find(job => job.command.includes("web-done") && job.status === "completed");
   await page.locator('[data-pbb="completion"]').filter({ hasText: completed.id }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "查看后台任务", exact: true }).count(), 0, "工具和完成输出不添加重复的顶栏弹出按钮");
   panel = await open();
   await panel.getByRole("button", { name: "刷新任务", exact: true }).click();
   const completeRow = panel.locator(".pbb-job").filter({ hasText: "web-done" });
