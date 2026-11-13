@@ -1,7 +1,7 @@
 import { truncateTail, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { JobManager, JobSnapshot } from "./jobs.ts";
 
-export const PACKAGE_VERSION = "0.2.1";
+export const PACKAGE_VERSION = "0.2.2";
 export const JOB_FORMAT = "pi-background-bash.job.v1";
 export const RPC_REQUEST = "pi-background-bash:rpc:v1:request";
 export const RPC_REPLY_PREFIX = "pi-background-bash:rpc:v1:reply:";

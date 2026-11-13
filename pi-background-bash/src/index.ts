@@ -57,6 +57,19 @@ export default function backgroundBash(pi: ExtensionAPI): void {
   let currentContext: ExtensionContext | undefined;
   let releaseLiveness: (() => void) | undefined;
   let releaseRpc: (() => void) | undefined;
+  let mayWake = true;
+  let settling = false;
+  const pendingWakeIds = new Set<string>();
+  const flushWake = () => {
+    const jobIds = [...pendingWakeIds];
+    pendingWakeIds.clear();
+    if (!mayWake || !jobIds.length) return;
+    // 结果已作为可见消息保存；这里只发隐藏的唤醒指针，不重复记录或伪造用户输入。
+    pi.sendMessage({
+      customType: "pi-background-bash:wakeup", display: false, details: { jobIds },
+      content: `Background bash tasks finished (recent IDs: ${jobIds.join(", ")}). Their saved completion records contain the final status and output. Continue from those results; do not poll to reconfirm completion.`,
+    }, { deliverAs: "followUp", triggerTurn: true });
+  };
 
   const refreshStatus = () => {
     if (!currentContext?.hasUI || !manager) return;
@@ -69,12 +82,14 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     }
   };
   const start = (ctx: ExtensionContext) => {
+    mayWake = true; settling = false; pendingWakeIds.clear();
     currentContext = ctx;
     manager = new JobManager({
       exec: (command, cwd, options) => createLocalBashOperations({ shellPath: pi.getSettings().shellPath }).exec(command, cwd, options),
     }, job => {
       const output = manager!.output(job.id, 4096);
       const tail = truncateTail(output.output, { maxBytes: 4096, maxLines: 20 });
+      // context-only 消息在安全的 turn_end 写入历史，不会被 Stop 的 clearQueue 丢弃。
       pi.sendMessage({
         customType: "pi-background-bash:completion",
         content: [
@@ -87,7 +102,13 @@ export default function backgroundBash(pi: ExtensionAPI): void {
           "This task is terminal. Continue from this result; do not poll to reconfirm completion.",
         ].join("\n"),
         display: true, details: { ...job, format: JOB_FORMAT, output: tail.content, truncated: output.truncated || tail.truncated },
-      }, { deliverAs: "followUp", triggerTurn: true });
+      }, { triggerTurn: false });
+      if (mayWake) {
+        pendingWakeIds.add(job.id);
+        // 完成事实全部保存，唤醒指针只保留最近 20 个，避免长轮次积累无界状态。
+        if (pendingWakeIds.size > 20) pendingWakeIds.delete(pendingWakeIds.values().next().value!);
+        if (!settling && currentContext?.isIdle()) flushWake();
+      }
       refreshStatus();
     });
     releaseLiveness = holdSession(ctx, manager);
@@ -99,6 +120,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     return manager!;
   };
   const shutdown = async () => {
+    mayWake = false; settling = false; pendingWakeIds.clear();
     releaseRpc?.();
     releaseRpc = undefined;
     await manager?.shutdown();
@@ -111,6 +133,15 @@ export default function backgroundBash(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => { await shutdown(); start(ctx); });
   pi.on("session_shutdown", shutdown);
   pi.on("session_tree", async (_event, ctx) => { await shutdown(); start(ctx); });
+  pi.on("agent_start", () => { mayWake = true; settling = false; });
+  // agent_end 后 SDK 仍可能重试，且 settled 的其他处理器可能异步运行；此时不提前唤醒。
+  pi.on("agent_end", () => { settling = true; });
+  pi.on("agent_settled", event => {
+    mayWake = !event.aborted;
+    settling = false;
+    if (event.aborted) pendingWakeIds.clear();
+    else flushWake();
+  });
 
   const builtin = createBashToolDefinition(process.cwd());
   pi.registerTool({
@@ -118,7 +149,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     defaultActive: false,
     parameters,
     outputSchema: bashOutputSchema,
-    description: `Execute bash in the current directory. In TUI/RPC, return normally if done within timeout (default ${DEFAULT_WAIT_SECONDS}s); otherwise keep the same process running in the background and return a job_id. background=true returns immediately. Completion wakes this session automatically. timeout is a wait deadline; only hard_timeout kills the process tree. Output is limited to 2000 lines/50KB; background previews to 32KB, with full logs retained. In print/JSON mode, automatic backgrounding is disabled and timeout retains native kill-on-timeout behavior.`,
+    description: `Execute bash in the current directory. In TUI/RPC, return normally if done within timeout (default ${DEFAULT_WAIT_SECONDS}s); otherwise keep the same process running in the background and return a job_id. background=true returns immediately. Completion is recorded and wakes this session automatically unless the main run was stopped. timeout is a wait deadline; only hard_timeout kills the process tree. Output is limited to 2000 lines/50KB; background previews to 32KB, with full logs retained. In print/JSON mode, automatic backgrounding is disabled and timeout retains native kill-on-timeout behavior.`,
     promptGuidelines: [
       ...builtin.promptGuidelines ?? [],
       "Use bash with background=true when background execution is useful; use timeout for the foreground wait and hard_timeout only for a real execution limit.",

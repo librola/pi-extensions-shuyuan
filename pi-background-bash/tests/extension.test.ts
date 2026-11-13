@@ -27,7 +27,7 @@ test("前台成功和非零退出保持 Pi 原生 structuredContent 与错误标
   assert.equal(h.messages.length, 0);
 });
 
-test("主动后台返回 job_id 而不是假退出码，完成通过 followUp 唤醒模型", async t => {
+test("主动后台返回 job_id，完成事实与隐藏的模型唤醒分离", async t => {
   const h = harness();
   t.after(() => h.close());
   await h.emit("session_start");
@@ -38,16 +38,83 @@ test("主动后台返回 job_id 而不是假退出码，完成通过 followUp �
   assert.ok(data.job_id);
   assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /do not poll/);
   assert.equal(h.statuses.get("pi-background-bash"), "bash jobs: 1");
-  await until(() => h.messages.length === 1);
+  await until(() => h.messages.length === 2);
   const completion = h.messages[0]!;
-  assert.deepEqual(completion.options, { deliverAs: "followUp", triggerTurn: true });
+  assert.deepEqual(completion.options, { triggerTurn: false });
   assert.equal(completion.message.customType, "pi-background-bash:completion");
   assert.equal(completion.message.details.id, data.job_id);
   assert.equal(completion.message.details.exit_code, 0);
   assert.match(completion.message.content, /beginend/);
+  const wake = h.messages[1]!;
+  assert.deepEqual(wake.options, { deliverAs: "followUp", triggerTurn: true });
+  assert.equal(wake.message.customType, "pi-background-bash:wakeup");
+  assert.equal(wake.message.display, false);
+  assert.deepEqual(wake.message.details.jobIds, [data.job_id]);
   assert.equal(h.statuses.get("pi-background-bash"), undefined);
   await h.call("bash_jobs", { action: "output", id: data.job_id });
-  assert.equal(h.messages.length, 1);
+  assert.equal(h.messages.length, 2);
+});
+
+test("忙碌期间只保存完成事实，自然 settled 后批量唤醒一次", async t => {
+  const h = harness();
+  t.after(() => h.close());
+  await h.emit("session_start");
+  h.ctx.isIdle = () => false;
+  await h.emit("agent_start");
+  const first = object((await h.call("bash", { command: "printf first", background: true })).structuredContent).job_id;
+  const second = object((await h.call("bash", { command: "printf second", background: true })).structuredContent).job_id;
+  await until(() => h.messages.length === 2);
+  assert.ok(h.messages.every(record => record.options.triggerTurn === false && record.message.display));
+  h.ctx.isIdle = () => true;
+  await h.emit("agent_end");
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  assert.equal(h.messages.length, 3);
+  assert.deepEqual(new Set(h.messages[2]!.message.details.jobIds), new Set([first, second]));
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  assert.equal(h.messages.length, 3, "完成记录和唤醒不能重复");
+});
+
+test("长轮次的唤醒指针有界，完成事实不因截尾丢失", async t => {
+  const h = harness();
+  t.after(() => h.close());
+  await h.emit("session_start");
+  h.ctx.isIdle = () => false;
+  for (let i = 0; i < 22; i++) {
+    await h.call("bash", { command: `printf ${i}`, background: true });
+    await until(() => h.messages.length === i + 1);
+  }
+  assert.equal(h.messages.filter(record => record.message.customType === "pi-background-bash:completion").length, 22);
+  h.ctx.isIdle = () => true;
+  await h.emit("agent_end");
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  const wake = h.messages.at(-1)!;
+  assert.equal(wake.message.details.jobIds.length, 20);
+  assert.ok(!wake.message.details.jobIds.includes(h.messages[0]!.message.details.id));
+});
+
+test("settled 分发和 Stop 之后完成均不唤醒，新的运行恢复自动通知", async t => {
+  const h = harness();
+  t.after(() => h.close());
+  await h.emit("session_start");
+  await h.emit("agent_start");
+  await h.emit("agent_end");
+  // 模拟 SDK 已空闲、但前一个异步 settled 处理器尚未结束的窗口。
+  const first = object((await h.call("bash", { command: "printf first", background: true })).structuredContent).job_id;
+  await until(() => h.messages.length === 1);
+  await h.emit("agent_settled", h.ctx, { aborted: true });
+  await h.call("bash", { command: "printf late", background: true });
+  await until(() => h.messages.length === 2);
+  assert.ok(h.messages.every(record => record.options.triggerTurn === false));
+  h.ctx.isIdle = () => false;
+  await h.emit("agent_start");
+  const resumed = object((await h.call("bash", { command: "printf resumed", background: true })).structuredContent).job_id;
+  await until(() => h.messages.length === 3);
+  h.ctx.isIdle = () => true;
+  await h.emit("agent_end");
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  assert.equal(h.messages.length, 4);
+  assert.deepEqual(h.messages[3]!.message.details.jobIds, [resumed]);
+  assert.ok(!h.messages[3]!.message.details.jobIds.includes(first));
 });
 
 test("软超时转后台，状态和当前输出查询不等待完成，stop 返回终态", async t => {
@@ -78,7 +145,7 @@ test("原生 shell 配置、命令前缀和当前会话环境在前后台一致�
   const foreground = object((await h.call("bash", { command })).structuredContent);
   assert.equal(foreground.output, "ok|own-session|test-provider|test-model|high|unset");
   const background = object((await h.call("bash", { command, background: true })).structuredContent);
-  await until(() => h.messages.length === 1);
+  await until(() => h.messages.length === 2);
   const output = object((await h.call("bash_jobs", { action: "output", id: background.job_id })).structuredContent);
   assert.equal(output.output, foreground.output);
   assert.equal(output.job.command, command);
@@ -93,7 +160,7 @@ test("大输出仍使用原生截断和完整输出路径；任务输出按字�
   assert.equal(result.details.truncation.truncated, true);
   assert.ok(result.details.fullOutputPath);
   const large = object((await h.call("bash", { command: "for ((i=0;i<3000;i++)); do printf '%s line\\n' \"$i\"; done", background: true })).structuredContent);
-  await until(() => h.messages.length === 1);
+  await until(() => h.messages.length === 2);
   const output = object((await h.call("bash_jobs", { action: "output", id: large.job_id, tail: 3 })).structuredContent);
   assert.equal(output.truncated, true);
   assert.equal(output.output, "2997 line\n2998 line\n2999 line");

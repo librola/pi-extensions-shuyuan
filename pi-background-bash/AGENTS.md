@@ -4,7 +4,7 @@
 
 - 使用公开的 `createBashToolDefinition` / `createLocalBashOperations`，复用宿主的 shell、环境注入、输出格式和进程树终止。
 - `timeout` 是 TUI/RPC 的前台等待期限；`hard_timeout` 才终止命令。后台任务脱离发起工具调用的 AbortSignal。
-- 完成消息用 `pi.sendMessage`，不得伪造用户输入。禁止模型轮询等待。
+- 完成事实用 `pi.sendMessage(..., { triggerTurn: false })` 在安全边界保存；隐藏的唤醒指针与事实分离，忙碌时等自然 `agent_settled`，Stop 后只保存事实、不重启模型。不得伪造用户输入，禁止模型轮询等待。
 - 所有任务按会话隔离；关闭、reload、切换会话和树导航必须清理任务，不能向新会话发送旧任务的通知。
 - 不启动工厂期的计时器或进程，不修改全局 Pi 配置，不引入运行时依赖。
 - 注释、文档和提交信息使用中文。

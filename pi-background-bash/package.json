@@ -1,6 +1,6 @@
 {
   "name": "pi-background-bash",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Pi 的受管后台 Bash：软等待超时、完成唤醒和任务查询",
   "repository": {

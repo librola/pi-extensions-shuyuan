@@ -39,7 +39,7 @@ assert.ok(existsSync(join(installed, "web/browser.js")));
 assert.ok(existsSync(join(installed, "src/rpc.ts")));
 // 新计数仅复用 v1 list；模拟已有 0.2.0 原生实例，证明无需为 Web 更新重启任务。
 const nativeRpc = join(installed, "src/rpc.ts");
-writeFileSync(nativeRpc, readFileSync(nativeRpc, "utf8").replace('PACKAGE_VERSION = "0.2.1"', 'PACKAGE_VERSION = "0.2.0"'));
+writeFileSync(nativeRpc, readFileSync(nativeRpc, "utf8").replace(/PACKAGE_VERSION = "0\.2\.\d+"/, 'PACKAGE_VERSION = "0.2.0"'));
 const provider = join(root, "offline-provider.mjs");
 writeFileSync(provider, `import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 export default function(pi) {

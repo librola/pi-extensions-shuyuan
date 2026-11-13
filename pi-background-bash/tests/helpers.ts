@@ -25,7 +25,7 @@ export function harness(options: { cwd?: string; sessionId?: string; mode?: "rpc
   const notifications: string[] = [];
   const mode = options.mode ?? "rpc";
   const ctx = {
-    cwd, mode, hasUI: mode === "rpc" || mode === "tui",
+    cwd, mode, hasUI: mode === "rpc" || mode === "tui", isIdle: () => true,
     model: { provider: "test-provider", id: "test-model" }, thinkingLevel: "high",
     sessionManager: { getSessionId: () => options.sessionId ?? "session-test", getSessionFile: () => undefined },
     ui: { setStatus: (key: string, value?: string) => statuses.set(key, value), notify: (value: string) => notifications.push(value) },
@@ -46,8 +46,8 @@ export function harness(options: { cwd?: string; sessionId?: string; mode?: "rpc
     getSettings: () => options.settings ?? {},
   } as unknown as ExtensionAPI;
   extension(api);
-  const emit = async (event: string, eventContext: ExtensionContext = ctx) => {
-    for (const handler of handlers.get(event) ?? []) await handler({ type: event, reason: "startup" }, eventContext);
+  const emit = async (event: string, eventContext: ExtensionContext = ctx, data: Record<string, unknown> = {}) => {
+    for (const handler of handlers.get(event) ?? []) await handler({ type: event, reason: "startup", ...data }, eventContext);
   };
   return {
     cwd, ctx, api, events, tools, commands, shortcuts, messages, statuses, notifications, emit,
