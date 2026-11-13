@@ -1,6 +1,6 @@
 {
   "name": "pi-error-retry",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "按规则无限重试 Pi 模型错误，并在长度截断时自动继续",
   "repository": {
@@ -13,6 +13,7 @@
     "url": "https://github.com/librola/pi-extensions-shuyuan/issues"
   },
   "files": [
+    "CHANGELOG.md",
     "index.ts",
     "src/",
     "examples/"

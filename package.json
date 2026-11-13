@@ -1,6 +1,6 @@
 {
   "name": "pi-extensions-shuyuan",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "统一管理 Pi 错误恢复与受管后台 Bash 扩展",
@@ -164,6 +164,8 @@
     }
   },
   "files": [
+    "CHANGELOG.md",
+    "pi-error-retry/CHANGELOG.md",
     "pi-error-retry/index.ts",
     "pi-error-retry/src",
     "pi-error-retry/examples",
