@@ -76,6 +76,8 @@ bash({ command: "npm test", timeout: 5, hard_timeout: 600 })
 
 `timeout` 是 **TUI/RPC 的前台等待期限**，不是强制终止期限。`hard_timeout` 才会终止进程树，默认不设置。
 
+文本返回明确区分主动后台、前台等待超时转后台和手动移交。等待超时会写明配置的秒数，例如 `Foreground wait timed out after 30s. The command was not terminated; it was moved to the background.`，随后保留任务 ID、真实状态、日志路径和完成通知说明；不会把软等待超时表述成命令被终止。
+
 后台返回包含：
 
 ```json

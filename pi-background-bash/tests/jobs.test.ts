@@ -18,6 +18,8 @@ async function start(jobs: JobManager, command: string, options: Parameters<JobM
     await jobs.run(command, process.cwd(), { ...options, background: true });
   } catch (error) {
     if (!(error instanceof Backgrounded)) throw error;
+    assert.equal(error.reason, "requested");
+    assert.equal(error.waitSeconds, undefined);
     jobs.returned(error.jobId);
     return error.jobId;
   }
@@ -61,6 +63,8 @@ test("软超时不终止进程，同一命令只执行一次，后续输出仍�
     await jobs.run("printf once; sleep 0.15; printf done", process.cwd(), { timeout: 0.02 });
   } catch (error) {
     assert.ok(error instanceof Backgrounded);
+    assert.equal(error.reason, "timeout");
+    assert.equal(error.waitSeconds, 0.02);
     id = error.jobId;
   }
   assert.ok(id);
@@ -107,7 +111,7 @@ test("手动移交移除取消信号和前台输出回调", async t => {
   const run = jobs.run("printf begin; sleep 0.1; printf end", process.cwd(), { signal: controller.signal, onData: data => chunks.push(data) });
   await until(() => chunks.length > 0);
   const id = jobs.background();
-  await assert.rejects(run, error => error instanceof Backgrounded && error.jobId === id);
+  await assert.rejects(run, error => error instanceof Backgrounded && error.jobId === id && error.reason === "manual" && error.waitSeconds === undefined);
   jobs.returned(id);
   controller.abort();
   await until(() => notices.length === 1);

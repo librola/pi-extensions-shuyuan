@@ -182,8 +182,11 @@ export default function backgroundBash(pi: ExtensionAPI): void {
         const tail = truncateTail(output.output, { maxBytes: MAX_OUTPUT_BYTES, maxLines: 2000 });
         const running = job.status === "running";
         const nextStep = running ? "Completion will wake this session. Continue independent work or end this turn; do not poll to wait." : "This background task is already terminal; its completion notification follows.";
+        const handoff = error.reason === "timeout"
+          ? `Foreground wait timed out after ${error.waitSeconds}s. The command was not terminated; it was moved to the background.`
+          : error.reason === "requested" ? "Started in the background as requested." : "Moved to the background by manual request.";
         const result = {
-          content: [{ type: "text" as const, text: `${tail.content || (running ? "(no output yet)" : "(no output)")}\n\nBackground task: ${job.id} (${job.status}). Full output: ${job.output_path}\n${output.truncated || tail.truncated ? "[Output preview truncated.]\n" : ""}${nextStep}` }],
+          content: [{ type: "text" as const, text: `${tail.content || (running ? "(no output yet)" : "(no output)")}\n\n${handoff}\nBackground task: ${job.id} (${job.status}). Full output: ${job.output_path}\n${output.truncated || tail.truncated ? "[Output preview truncated.]\n" : ""}${nextStep}` }],
           details: { format: JOB_FORMAT, fullOutputPath: job.output_path, job: preview(job) },
           structuredContent: {
             ...output, output: tail.content, truncated: output.truncated || tail.truncated,

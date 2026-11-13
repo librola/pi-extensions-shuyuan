@@ -36,6 +36,7 @@ test("主动后台返回 job_id，完成事实与隐藏的模型唤醒分离", a
   assert.equal(data.status, "running");
   assert.equal(data.exit_code, undefined);
   assert.ok(data.job_id);
+  assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /Started in the background as requested\./);
   assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /do not poll/);
   assert.equal(h.statuses.get("pi-background-bash"), "bash jobs: 1");
   await until(() => h.messages.length === 2);
@@ -122,6 +123,7 @@ test("软超时转后台，状态和当前输出查询不等待完成，stop 返
   t.after(() => h.close());
   await h.emit("session_start");
   const result = await h.call("bash", { command: "printf one; sleep 5; printf two", timeout: 0.03 });
+  assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /Foreground wait timed out after 0\.03s\. The command was not terminated; it was moved to the background\./);
   const id = object(result.structuredContent).job_id;
   await until(async () => object((await h.call("bash_jobs", { action: "output", id })).structuredContent).output === "one");
   const status = object((await h.call("bash_jobs", { action: "status", id })).structuredContent);
@@ -200,7 +202,9 @@ test("手动后台命令和快捷键不依赖 TUI 定制界面", async t => {
   const pending = h.call("bash", { command: "sleep 0.2; printf done" });
   await until(async () => object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs.length === 1);
   await h.commands.get("bash-bg").handler("", h.ctx);
-  const data = object((await pending).structuredContent);
+  const result = await pending;
+  const data = object(result.structuredContent);
+  assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /Moved to the background by manual request\./);
   assert.ok(data.job_id);
   assert.ok(h.shortcuts.has("ctrl+shift+b"));
   assert.match(h.notifications[0]!, /moved to background/);

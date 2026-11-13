@@ -32,11 +32,12 @@ interface Outcome {
   exitCode?: number | null;
   error?: Error;
 }
+export type BackgroundReason = "requested" | "timeout" | "manual";
 interface Job extends JobSnapshot {
   controller: AbortController;
   done: Promise<Outcome>;
   detach(): void;
-  handoff(): void;
+  handoff(reason: BackgroundReason): void;
   onData?: (data: Buffer) => void;
   returned: boolean;
   notified: boolean;
@@ -54,9 +55,13 @@ export interface RunOptions {
 
 export class Backgrounded extends Error {
   readonly jobId: string;
-  constructor(jobId: string) {
+  readonly reason: BackgroundReason;
+  readonly waitSeconds?: number;
+  constructor(jobId: string, reason: BackgroundReason = "manual", waitSeconds?: number) {
     super(`Command moved to background: ${jobId}`);
     this.jobId = jobId;
+    this.reason = reason;
+    this.waitSeconds = waitSeconds;
   }
 }
 
@@ -129,7 +134,7 @@ export class JobManager {
     }
   }
 
-  background(id?: string): string {
+  background(id?: string, reason: BackgroundReason = "manual"): string {
     const job = id ? this.requireJob(id) : [...this.jobs.values()].reverse().find(candidate => candidate.status === "running" && !candidate.background);
     if (!job || job.status !== "running") throw new Error("No running foreground bash command to background");
     if (job.background) return job.id;
@@ -137,7 +142,7 @@ export class JobManager {
     // 移交之后不再绑定发起轮次的取消信号，也不再向已返回的工具发送流式更新。
     job.detach();
     job.onData = undefined;
-    job.handoff();
+    job.handoff(reason);
     return job.id;
   }
 
@@ -204,8 +209,10 @@ export class JobManager {
     const id = `job-${randomUUID().slice(0, 8)}`;
     const outputPath = join(this.logDirectory, `${id}.log`);
     const fd = openSync(outputPath, "wx", 0o600);
-    let resolveHandoff!: () => void;
-    const handoff = new Promise<"background">(resolve => { resolveHandoff = () => resolve("background"); });
+    let resolveHandoff!: (reason: BackgroundReason) => void;
+    const handoff = new Promise<Backgrounded>(resolve => {
+      resolveHandoff = reason => resolve(new Backgrounded(id, reason, reason === "timeout" ? options.timeout ?? DEFAULT_WAIT_SECONDS : undefined));
+    });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     const onAbort = () => { job.stopReason = "stopped"; controller.abort(); };
@@ -268,13 +275,13 @@ export class JobManager {
       }
     });
 
-    if (options.background) this.background(id);
+    if (options.background) this.background(id, "requested");
     else {
-      timer = setTimeout(() => this.background(id), (options.timeout ?? DEFAULT_WAIT_SECONDS) * 1000);
+      timer = setTimeout(() => this.background(id, "timeout"), (options.timeout ?? DEFAULT_WAIT_SECONDS) * 1000);
       timer.unref();
     }
     const outcome = await Promise.race([job.done, handoff]);
-    if (outcome === "background") throw new Backgrounded(id);
+    if (outcome instanceof Backgrounded) throw outcome;
     if (outcome.error) throw outcome.error;
     return { exitCode: outcome.exitCode ?? null };
   }
