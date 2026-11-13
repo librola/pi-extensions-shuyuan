@@ -1,0 +1,46 @@
+{
+  "name": "pi-error-retry",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "按规则无限重试 Pi 模型错误，并在长度截断时自动继续",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/librola/pi-extensions-shuyuan.git",
+    "directory": "pi-error-retry"
+  },
+  "homepage": "https://github.com/librola/pi-extensions-shuyuan/tree/main/pi-error-retry#readme",
+  "bugs": {
+    "url": "https://github.com/librola/pi-extensions-shuyuan/issues"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "examples/"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

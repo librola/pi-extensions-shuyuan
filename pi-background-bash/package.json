@@ -1,0 +1,75 @@
+{
+  "name": "pi-background-bash",
+  "version": "0.2.1",
+  "private": true,
+  "description": "Pi 的受管后台 Bash：软等待超时、完成唤醒和任务查询",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/librola/pi-extensions-shuyuan.git",
+    "directory": "pi-background-bash"
+  },
+  "homepage": "https://github.com/librola/pi-extensions-shuyuan/tree/main/pi-background-bash#readme",
+  "bugs": {
+    "url": "https://github.com/librola/pi-extensions-shuyuan/issues"
+  },
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "files": ["src", "web", "README.md"],
+  "piWeb": {
+    "apiVersion": 1,
+    "lifecycle": "session",
+    "id": "pi-background-bash",
+    "label": "后台 Bash 任务",
+    "entry": "web/browser.js",
+    "assets": ["web/browser.js", "web/dropdown.js", "web/counter.js", "web/parse.js", "web/style.css"],
+    "bridge": {
+      "entry": "web/bridge.mjs",
+      "actions": [
+        { "name": "count", "kind": "query", "session": "active", "input": { "type": "object", "properties": {} } },
+        { "name": "list", "kind": "query", "session": "active", "input": { "type": "object", "properties": {} } },
+        { "name": "status", "kind": "query", "session": "active", "input": { "type": "object", "properties": { "id": { "type": "string", "maxLength": 40 } }, "required": ["id"] } },
+        { "name": "output", "kind": "query", "session": "active", "input": { "type": "object", "properties": { "id": { "type": "string", "maxLength": 40 }, "tail": { "type": "number" } }, "required": ["id"] } },
+        { "name": "stop", "kind": "mutation", "session": "active", "input": { "type": "object", "properties": { "id": { "type": "string", "maxLength": 40 } }, "required": ["id"] } },
+        { "name": "background", "kind": "mutation", "session": "active", "input": { "type": "object", "properties": { "id": { "type": "string", "maxLength": 40 } } } }
+      ],
+      "permissions": {
+        "events": [{
+          "package": "pi-background-bash", "version": ">=0.2.0 <0.3.0",
+          "request": "pi-background-bash:rpc:v1:request", "replyPrefix": "pi-background-bash:rpc:v1:reply:",
+          "methods": ["ping", "list", "status", "output", "stop", "background"],
+          "queryMethods": ["ping", "list", "status", "output"]
+        }]
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:web": "node tests/web.e2e.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@types/node": "22.19.1",
+    "@types/react": "19.2.14",
+    "playwright": "1.63.0",
+    "typebox": "1.3.27",
+    "typescript": "5.9.3"
+  }
+}
