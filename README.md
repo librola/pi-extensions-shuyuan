@@ -4,7 +4,7 @@
 
 | 扩展 | 功能 | 说明 |
 | --- | --- | --- |
-| `pi-error-retry` | 按规则重试模型错误，输出长度截断后自动续写 | [文档](pi-error-retry/README.md) |
+| `pi-error-retry` | 按规则重试模型错误、截断后自动续写，支持规则导入／导出命令 | [文档](pi-error-retry/README.md) |
 | `pi-background-bash` | 受管后台 Bash、完成唤醒、任务查询及 Pi Web 顶部任务下拉框 | [文档](pi-background-bash/README.md) |
 
 ## 安装

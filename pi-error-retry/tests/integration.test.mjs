@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -392,6 +392,40 @@ test("真正通过 Pi 的 TypeScript 文件加载器加载扩展", async (t) => 
 
 test("按本地包清单加载已注册扩展", async (t) => {
 	const f = await fixture(t, [{ stopReason: "error", errorMessage: "retry-me" }, { text: "完成" }], { packageExtension: true });
+	await f.session.prompt("任务");
+	assert.equal(f.requests.length, 2);
+	assert.equal(recovery(f.session, "retry").length, 1);
+	assert.deepEqual(f.errors, []);
+});
+
+test("真实 Pi SDK 派发导入导出命令不调用模型，导入后的下一次错误使用新规则", async (t) => {
+	const f = await fixture(t, [{ stopReason: "error", errorMessage: "imported-error" }, { text: "完成" }], { packageExtension: true });
+	const notices = [];
+	let confirmations = 0;
+	await f.session.bindExtensions({
+		mode: "rpc", onError: error => f.errors.push(error),
+		uiContext: {
+			notify: (message, type) => notices.push({ message, type }), setStatus: () => {},
+			confirm: async () => { confirmations++; return true; },
+		},
+	});
+	const entries = f.session.sessionManager.getEntries().length;
+	const exported = join(f.directory, "export rules.json");
+	await f.session.prompt(`/error-retry export "${exported}"`);
+	assert.deepEqual(JSON.parse(readFileSync(exported, "utf8")), {
+		version: 1, rules: [{ mode: "contains", pattern: "retry-me" }],
+	});
+	const input = join(f.directory, "dsh rules.json");
+	const rules = [{ mode: "contains", pattern: "imported-error" }];
+	writeFileSync(input, JSON.stringify({ version: 1, rules }));
+	await f.session.prompt(`/error-retry import "${input}"`);
+	assert.equal(confirmations, 1);
+	assert.deepEqual(JSON.parse(readFileSync(f.configPath, "utf8")), { rules });
+	assert.equal(f.requests.length, 0, "文件命令不能启动模型请求");
+	assert.equal(f.session.sessionManager.getEntries().length, entries, "文件命令不写入模型上下文");
+	assert.equal(f.session.isStreaming, false);
+	assert.ok(notices.some(notice => notice.message.startsWith("已导入")));
+	assert.ok(notices.some(notice => notice.message.startsWith("已导出")));
 	await f.session.prompt("任务");
 	assert.equal(f.requests.length, 2);
 	assert.equal(recovery(f.session, "retry").length, 1);

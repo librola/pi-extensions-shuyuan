@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, SessionEntry, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import { readConfig, saveConfig } from "./src/config.ts";
+import { exportRulesFile, readRulesFile, resolveRulesFilePath } from "./src/transfer.ts";
 import { matchesRules, policyKey, providerRetryAfter, retryDelay, waitForRetry } from "./src/rules.ts";
 
 export const RECOVERY_ENTRY = "pi-error-retry.recovery";
@@ -148,19 +149,50 @@ export function registerErrorRetry(pi: ExtensionAPI, configPath: string): void {
 	});
 
 	pi.registerCommand("error-retry", {
-		description: "查看错误重试规则；/error-retry edit 编辑规则，/error-retry stop 停止当前请求",
+		description: "查看规则；edit 编辑，stop 停止，import <路径> 导入，export <路径> 导出",
 		handler: async (args, ctx) => {
-			const action = args.trim();
-			if (action === "stop") {
+			const commandLifetime = lifetime;
+			if (commandLifetime.signal.aborted) return;
+			const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(args.trim());
+			const action = match?.[1] ?? "";
+			const argument = match?.[2]?.trim() ?? "";
+			if (action === "stop" && !argument) {
 				pendingRetry = undefined;
 				ctx.abort();
 				return;
 			}
-			if (action && action !== "edit") {
-				ctx.ui.notify("用法：/error-retry [edit|stop]", "warning");
+			if ((action && !["edit", "import", "export"].includes(action)) ||
+				(action === "edit" && argument) || (["import", "export"].includes(action) && !argument)) {
+				ctx.ui.notify("用法：/error-retry [edit|stop|import <文件路径>|export <文件路径>]", "warning");
 				return;
 			}
 			try {
+				if (action === "import" || action === "export") {
+					const path = resolveRulesFilePath(argument, ctx.cwd);
+					if (action === "export") {
+						const config = exportRulesFile(configPath, path);
+						ctx.ui.notify(`已导出 ${config.rules.length} 条规则：${path}（DSH v1 格式）`, "info");
+						return;
+					}
+					if (!ctx.hasUI) {
+						ctx.ui.notify("当前模式无法确认替换规则，请在 TUI 或支持确认对话的 RPC 客户端导入", "warning");
+						return;
+					}
+					const snapshot = readConfig(configPath);
+					const incoming = readRulesFile(path);
+					const confirmed = await ctx.ui.confirm("导入错误重试规则",
+						`从 ${path} 导入 ${incoming.rules.length} 条规则，将替换当前 ${snapshot.config.rules.length} 条规则。保存不取消已排定的等待；无限重试可能产生持续请求和费用。是否继续？`,
+						{ signal: commandLifetime.signal });
+					// 对话可能跨越 reload 或会话切换；旧命令不能继续写文件或通知新会话。
+					if (commandLifetime.signal.aborted) return;
+					if (!confirmed) {
+						ctx.ui.notify("已取消导入，规则未修改", "info");
+						return;
+					}
+					const config = saveConfig(configPath, incoming, snapshot.revision);
+					ctx.ui.notify(`已导入 ${config.rules.length} 条规则，替换原规则；下次错误判定自动生效`, "info");
+					return;
+				}
 				const snapshot = readConfig(configPath);
 				if (action !== "edit") {
 					ctx.ui.notify(`错误规则：${snapshot.config.rules.length} 条（命中后无限重试）；长度截断：自动继续。配置：${configPath}`, "info");
@@ -191,7 +223,9 @@ export function registerErrorRetry(pi: ExtensionAPI, configPath: string): void {
 					}
 				}
 			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				if (!commandLifetime.signal.aborted) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				}
 			}
 		},
 	});
