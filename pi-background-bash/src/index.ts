@@ -6,13 +6,13 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Backgrounded, DEFAULT_WAIT_SECONDS, JobManager, MAX_OUTPUT_BYTES, type JobSnapshot } from "./jobs.ts";
+import { Backgrounded, DEFAULT_WAIT_SECONDS, getAutoBackground, getDefaultWaitSeconds, JobManager, MAX_OUTPUT_BYTES, type JobSnapshot } from "./jobs.ts";
 import { JOB_FORMAT, registerJobsRpc } from "./rpc.ts";
 
 const seconds = (description: string) => Type.Optional(Type.Number({ description, exclusiveMinimum: 0, maximum: 2_147_483_647 / 1000 }));
 const parameters = Type.Object({
   command: Type.String({ description: "Shell command to execute", minLength: 1 }),
-  timeout: seconds(`Foreground wait in seconds before moving the same command to the background (default ${DEFAULT_WAIT_SECONDS}s in TUI/RPC). Does not kill the command.`),
+  timeout: seconds(`Foreground wait in seconds before moving the same command to the background (default ${DEFAULT_WAIT_SECONDS}s in TUI/RPC; configurable via backgroundBash.defaultTimeoutSeconds in settings.json). An explicit timeout overrides that default. Ignored for automatic handoff when backgroundBash.autoBackground is false. Does not kill the command.`),
   background: Type.Optional(Type.Boolean({ description: "Start in the background immediately; completion will wake this session." })),
   hard_timeout: seconds("Maximum execution time in seconds, including time in the background. Kills the process tree; no limit by default."),
 });
@@ -64,9 +64,9 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     const jobIds = [...pendingWakeIds];
     pendingWakeIds.clear();
     if (!mayWake || !jobIds.length) return;
-    // 结果已作为可见消息保存；这里只发隐藏的唤醒指针，不重复记录或伪造用户输入。
+    // 结果已作为可见消息保存；唤醒提示也可见，让后续续答的原因明确，不重复记录或伪造用户输入。
     pi.sendMessage({
-      customType: "pi-background-bash:wakeup", display: false, details: { jobIds },
+      customType: "pi-background-bash:wakeup", display: true, details: { jobIds },
       content: `Background bash tasks finished (recent IDs: ${jobIds.join(", ")}). Their saved completion records contain the final status and output. Continue from those results; do not poll to reconfirm completion.`,
     }, { deliverAs: "followUp", triggerTurn: true });
   };
@@ -149,7 +149,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     defaultActive: false,
     parameters,
     outputSchema: bashOutputSchema,
-    description: `Execute bash in the current directory. In TUI/RPC, return normally if done within timeout (default ${DEFAULT_WAIT_SECONDS}s); otherwise keep the same process running in the background and return a job_id. background=true returns immediately. Completion is recorded and wakes this session automatically unless the main run was stopped. timeout is a wait deadline; only hard_timeout kills the process tree. Output is limited to 2000 lines/50KB; background previews to 32KB, with full logs retained. In print/JSON mode, automatic backgrounding is disabled and timeout retains native kill-on-timeout behavior.`,
+    description: `Execute a bash command in the current working directory. In TUI/RPC, return normally if done within timeout (default ${DEFAULT_WAIT_SECONDS}s; configurable via backgroundBash.defaultTimeoutSeconds in settings.json, overridden by an explicit timeout); otherwise keep the same process running in the background and return a job_id. Set backgroundBash.autoBackground=false in settings.json to keep foreground calls waiting instead of automatically handing them off. background=true returns immediately regardless of that switch. Completion is recorded and wakes this session automatically unless the main run was stopped. timeout is a wait deadline; only hard_timeout kills the process tree. Output is limited to 2000 lines/50KB; background previews to 32KB, with full logs retained. In print/JSON mode, automatic backgrounding is disabled and timeout retains native kill-on-timeout behavior.`,
     promptGuidelines: [
       ...builtin.promptGuidelines ?? [],
       "Use bash with background=true when background execution is useful; use timeout for the foreground wait and hard_timeout only for a real execution limit.",
@@ -161,6 +161,10 @@ export default function backgroundBash(pi: ExtensionAPI): void {
       const settings = pi.getSettings();
       const jobs = ctx.hasUI ? getManager(ctx) : undefined;
       if (!ctx.hasUI && params.background) throw new Error("Background bash requires a persistent TUI/RPC session; print/JSON mode cannot deliver later completion notifications.");
+      // 开关只控制自动移交；主动后台不依赖默认配置，关闭自动移交仍可手动移交。
+      const config = Reflect.get(settings, "backgroundBash");
+      const autoBackground = jobs && !params.background ? getAutoBackground(config) : true;
+      const timeout = params.timeout ?? (jobs && !params.background && autoBackground ? getDefaultWaitSeconds(config) : undefined);
       const native = createBashToolDefinition(ctx.cwd, {
         shellPath: settings.shellPath, commandPrefix: settings.shellCommandPrefix,
         spawnHook: context => {
@@ -169,7 +173,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
           return context;
         },
         ...(jobs ? { operations: { exec: (command, cwd, options) => jobs.run(command, cwd, {
-          ...options, background: params.background, timeout: params.timeout, hardTimeout: params.hard_timeout,
+          ...options, background: params.background, autoBackground, timeout, hardTimeout: params.hard_timeout,
           displayCommand: params.command,
         }) } } : {}),
       });

@@ -1,13 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { harness, until } from "./helpers.ts";
 
 function object(value: unknown): Record<string, any> {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as Record<string, any>;
 }
+
+test("Bash 描述首句与原版一致，默认等待在工具描述和参数中均为 180 秒", async t => {
+  const h = harness();
+  t.after(() => h.close());
+  const bash = h.tools.get("bash")!;
+  assert.ok(bash.description.startsWith("Execute a bash command in the current working directory."));
+  assert.match(bash.description, /default 180s/);
+  assert.match(object(bash.parameters).properties.timeout.description, /default 180s/);
+  assert.match(bash.description, /backgroundBash\.defaultTimeoutSeconds/);
+  assert.match(object(bash.parameters).properties.timeout.description, /backgroundBash\.defaultTimeoutSeconds/);
+  assert.match(bash.description, /backgroundBash\.autoBackground=false/);
+});
 
 test("前台成功和非零退出保持 Pi 原生 structuredContent 与错误标记", async t => {
   const h = harness();
@@ -27,7 +39,58 @@ test("前台成功和非零退出保持 Pi 原生 structuredContent 与错误标
   assert.equal(h.messages.length, 0);
 });
 
-test("主动后台返回 job_id，完成事实与隐藏的模型唤醒分离", async t => {
+test("默认等待读取 Pi 的有效设置，项目配置覆盖全局，显式参数再覆盖配置", async t => {
+  const storage = { withLock: (scope: "global" | "project", read: (current: string | undefined) => string | undefined) => {
+    read(JSON.stringify({ backgroundBash: { defaultTimeoutSeconds: scope === "global" ? 0.02 : 0.03 } }));
+  } };
+  const global = SettingsManager.fromStorage(storage, { projectTrusted: false }).getSettings();
+  assert.equal(Reflect.get(global, "backgroundBash").defaultTimeoutSeconds, 0.02);
+  const settings = SettingsManager.fromStorage(storage, { projectTrusted: true }).getSettings();
+  assert.equal(Reflect.get(settings, "backgroundBash").defaultTimeoutSeconds, 0.03);
+  const h = harness({ settings: { ...settings } });
+  t.after(() => h.close());
+  await h.emit("session_start");
+  for (const timeout of [undefined, 0.04]) {
+    const result = await h.call("bash", { command: "sleep 5", ...(timeout === undefined ? {} : { timeout }) });
+    const expected = timeout ?? 0.03;
+    assert.ok(result.content[0]!.type === "text" && result.content[0].text.includes(`Foreground wait timed out after ${expected}s.`));
+    assert.equal(object(result.structuredContent).status, "running");
+    await h.call("bash_jobs", { action: "stop", id: object(result.structuredContent).job_id });
+  }
+});
+
+test("有效配置可关闭自动移交，显式后台仍可用，非法开关不启动命令", async t => {
+  const settings = { backgroundBash: { autoBackground: false as unknown, defaultTimeoutSeconds: 0.001 } };
+  const h = harness({ settings });
+  t.after(() => h.close());
+  await h.emit("session_start");
+  const foreground = await h.call("bash", { command: "sleep 0.04; printf foreground", timeout: 0.001 });
+  assert.equal(object(foreground.structuredContent).output, "foreground");
+  assert.equal(object(foreground.structuredContent).job_id, undefined);
+  assert.equal(h.messages.length, 0);
+  settings.backgroundBash.autoBackground = "false";
+  const count = object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs.length;
+  await assert.rejects(h.call("bash", { command: "printf must-not-run", timeout: 0.01 }), /backgroundBash\.autoBackground/);
+  assert.equal(object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs.length, count);
+  const background = await h.call("bash", { command: "sleep 5", background: true });
+  assert.equal(object(background.structuredContent).status, "running");
+  await h.call("bash_jobs", { action: "stop", id: object(background.structuredContent).job_id });
+});
+
+test("非法默认配置不启动命令，主动后台与显式等待不依赖默认配置", async t => {
+  const h = harness({ settings: { backgroundBash: { defaultTimeoutSeconds: 0 } } });
+  t.after(() => h.close());
+  await h.emit("session_start");
+  await assert.rejects(h.call("bash", { command: "printf must-not-run" }), /backgroundBash\.defaultTimeoutSeconds/);
+  assert.deepEqual(object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs, []);
+  for (const options of [{ background: true }, { timeout: 0.02 }]) {
+    const result = await h.call("bash", { command: "sleep 5", ...options });
+    assert.equal(object(result.structuredContent).status, "running");
+    await h.call("bash_jobs", { action: "stop", id: object(result.structuredContent).job_id });
+  }
+});
+
+test("主动后台返回 job_id，完成事实与可见的模型唤醒分离", async t => {
   const h = harness();
   t.after(() => h.close());
   await h.emit("session_start");
@@ -49,7 +112,7 @@ test("主动后台返回 job_id，完成事实与隐藏的模型唤醒分离", a
   const wake = h.messages[1]!;
   assert.deepEqual(wake.options, { deliverAs: "followUp", triggerTurn: true });
   assert.equal(wake.message.customType, "pi-background-bash:wakeup");
-  assert.equal(wake.message.display, false);
+  assert.equal(wake.message.display, true);
   assert.deepEqual(wake.message.details.jobIds, [data.job_id]);
   assert.equal(h.statuses.get("pi-background-bash"), undefined);
   await h.call("bash_jobs", { action: "output", id: data.job_id });
@@ -70,6 +133,7 @@ test("忙碌期间只保存完成事实，自然 settled 后批量唤醒一次",
   await h.emit("agent_end");
   await h.emit("agent_settled", h.ctx, { aborted: false });
   assert.equal(h.messages.length, 3);
+  assert.equal(h.messages[2]!.message.display, true);
   assert.deepEqual(new Set(h.messages[2]!.message.details.jobIds), new Set([first, second]));
   await h.emit("agent_settled", h.ctx, { aborted: false });
   assert.equal(h.messages.length, 3, "完成记录和唤醒不能重复");

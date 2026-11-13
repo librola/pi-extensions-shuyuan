@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 
-export const DEFAULT_WAIT_SECONDS = 30;
+export const DEFAULT_WAIT_SECONDS = 180;
 export const MAX_LOG_BYTES = 64 * 1024 * 1024;
 export const MAX_OUTPUT_BYTES = 32 * 1024;
 const MAX_TIMER_SECONDS = 2_147_483_647 / 1000;
@@ -45,6 +45,7 @@ interface Job extends JobSnapshot {
 }
 export interface RunOptions {
   background?: boolean;
+  autoBackground?: boolean;
   timeout?: number;
   hardTimeout?: number;
   signal?: AbortSignal;
@@ -69,6 +70,28 @@ export function validateSeconds(value: number | undefined, name: string): void {
   if (value !== undefined && (!Number.isFinite(value) || value <= 0 || value > MAX_TIMER_SECONDS)) {
     throw new Error(`${name} must be greater than 0 and at most ${MAX_TIMER_SECONDS} seconds`);
   }
+}
+
+// 扩展自有配置通过 Pi 的有效 settings 读取，不改写全局或项目文件。
+function backgroundConfig(config: unknown): Record<string, unknown> {
+  if (config === undefined) return {};
+  if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("backgroundBash must be an object in settings.json");
+  return config as Record<string, unknown>;
+}
+
+export function getAutoBackground(config: unknown): boolean {
+  const value = backgroundConfig(config).autoBackground;
+  if (value === undefined) return true;
+  if (typeof value !== "boolean") throw new Error("backgroundBash.autoBackground must be a boolean");
+  return value;
+}
+
+export function getDefaultWaitSeconds(config: unknown): number {
+  const value = backgroundConfig(config).defaultTimeoutSeconds;
+  if (value === undefined) return DEFAULT_WAIT_SECONDS;
+  if (typeof value !== "number") throw new Error("backgroundBash.defaultTimeoutSeconds must be a number of seconds");
+  validateSeconds(value, "backgroundBash.defaultTimeoutSeconds");
+  return value;
 }
 
 // 状态与日志只属于一个会话实例；工厂加载本模块时不创建目录、进程或计时器。
@@ -276,7 +299,7 @@ export class JobManager {
     });
 
     if (options.background) this.background(id, "requested");
-    else {
+    else if (options.autoBackground !== false) {
       timer = setTimeout(() => this.background(id, "timeout"), (options.timeout ?? DEFAULT_WAIT_SECONDS) * 1000);
       timer.unref();
     }

@@ -96,6 +96,11 @@ for (const useCodemode of [false, true]) {
     assert.equal(session.getLastAssistantText(), "Handled sdk-done.");
     const completion = session.messages.filter(message => message.role === "custom" && message.customType === "pi-background-bash:completion");
     assert.equal(completion.length, 1);
+    const wake = session.messages.filter(message => message.role === "custom" && message.customType === "pi-background-bash:wakeup");
+    assert.equal(wake.length, 1);
+    const wakeMessage = wake[0]!;
+    assert.ok(wakeMessage.role === "custom");
+    assert.equal(wakeMessage.display, true, "直接和 codemode 调用的自动唤醒提示均可见");
     assert.deepEqual(extensionErrors, []);
     assert.equal(networkCalls, 0);
   });

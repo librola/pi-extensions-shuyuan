@@ -5,7 +5,7 @@ import { readFileSync, statSync, existsSync, mkdtempSync, rmSync } from "node:fs
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
-import { Backgrounded, JobManager } from "../src/jobs.ts";
+import { Backgrounded, getAutoBackground, getDefaultWaitSeconds, JobManager } from "../src/jobs.ts";
 import { until } from "./helpers.ts";
 
 function manager(limits?: { maxLogBytes: number; maxRunning: number }) {
@@ -35,6 +35,76 @@ test("短命令保留真实退出码和输出，不发送后台通知", async t 
   assert.equal(jobs.list()[0]!.status, "failed");
   assert.equal(jobs.list()[0]!.exit_code, 7);
   assert.deepEqual(notices, []);
+});
+
+test("默认等待配置只接受合法的秒数，未设置时回落到 180 秒", () => {
+  assert.equal(getDefaultWaitSeconds(undefined), 180);
+  assert.equal(getDefaultWaitSeconds({}), 180);
+  assert.equal(getDefaultWaitSeconds({ defaultTimeoutSeconds: 60 }), 60);
+  assert.equal(getDefaultWaitSeconds({ defaultTimeoutSeconds: 0.5 }), 0.5);
+  assert.equal(getAutoBackground(undefined), true);
+  assert.equal(getAutoBackground({}), true);
+  assert.equal(getAutoBackground({ autoBackground: true }), true);
+  assert.equal(getAutoBackground({ autoBackground: false }), false);
+  for (const autoBackground of ["false", 0, null]) assert.throws(() => getAutoBackground({ autoBackground }), /backgroundBash\.autoBackground/);
+  for (const config of [null, [], "60", { defaultTimeoutSeconds: "60" }, { defaultTimeoutSeconds: null },
+    ...[0, -1, NaN, Infinity, 3_000_000].map(defaultTimeoutSeconds => ({ defaultTimeoutSeconds }))]) {
+    assert.throws(() => getDefaultWaitSeconds(config), /backgroundBash/);
+  }
+});
+
+test("默认前台等待为 180 秒，超时移交不终止或重跑命令", async t => {
+  const { jobs } = manager();
+  t.after(() => jobs.shutdown());
+  const deadlines: Array<number | undefined> = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  // 记录真实等待期限，再加速触发，避免测试实际等待三分钟。
+  t.mock.method(globalThis, "setTimeout", (callback: () => void, milliseconds?: number) => {
+    deadlines.push(milliseconds);
+    return originalSetTimeout(callback, 1);
+  });
+  let id = "";
+  await assert.rejects(jobs.run("sleep 5; printf default-done", process.cwd()), error => {
+    assert.ok(error instanceof Backgrounded);
+    assert.equal(error.reason, "timeout");
+    assert.equal(error.waitSeconds, 180);
+    id = error.jobId;
+    return true;
+  });
+  assert.equal(deadlines[0], 180_000);
+  assert.equal(jobs.get(id).status, "running");
+  assert.equal(jobs.get(id).background, true);
+  assert.equal(jobs.list().length, 1);
+  await jobs.stop(id);
+});
+
+test("关闭自动移交后超过软等待仍前台完成，不发送后台通知", async t => {
+  const { jobs, notices } = manager();
+  t.after(() => jobs.shutdown());
+  const result = await jobs.run("printf once; sleep 0.04; printf done", process.cwd(), { autoBackground: false, timeout: 0.005 });
+  assert.equal(result.exitCode, 0);
+  const job = jobs.list()[0]!;
+  assert.equal(job.background, false);
+  assert.equal(job.status, "completed");
+  assert.equal(jobs.output(job.id).output, "oncedone");
+  assert.deepEqual(notices, []);
+});
+
+test("关闭自动移交不禁止主动后台、手动移交或硬超时", async t => {
+  const { jobs } = manager();
+  t.after(() => jobs.shutdown());
+  const explicit = await start(jobs, "sleep 5", { autoBackground: false });
+  assert.equal(jobs.get(explicit).background, true);
+  await jobs.stop(explicit);
+  const running = jobs.run("sleep 5", process.cwd(), { autoBackground: false });
+  const handoff = assert.rejects(running, error => error instanceof Backgrounded && error.reason === "manual");
+  const manual = jobs.background();
+  await handoff;
+  assert.equal(jobs.get(manual).background, true);
+  await jobs.stop(manual);
+  await assert.rejects(jobs.run("sleep 5", process.cwd(), { autoBackground: false, timeout: 0.001, hardTimeout: 0.03 }), /timeout:0\.03/);
+  assert.equal(jobs.list().at(-1)!.status, "timed_out");
+  assert.equal(jobs.list().at(-1)!.background, false);
 });
 
 test("主动后台立即移交，完成后只通知一次，完整日志权限为 0600", async t => {
