@@ -80,4 +80,4 @@ pi-extensions-shuyuan/
 └── tests/                  # 统一包的安装与资源回归测试
 ```
 
-原目录的 Git 元数据、node_modules 和临时产物不纳入本仓库；原目录仍保留，后续统一在本仓库开发。
+原目录的 Git 元数据、node_modules 和临时产物不纳入本仓库；后续统一在本仓库开发。
