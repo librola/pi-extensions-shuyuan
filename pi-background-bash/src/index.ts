@@ -189,8 +189,12 @@ export default function backgroundBash(pi: ExtensionAPI): void {
         const handoff = error.reason === "timeout"
           ? `Foreground wait timed out after ${error.waitSeconds}s. The command was not terminated; it was moved to the background.`
           : error.reason === "requested" ? "Started in the background as requested." : "Moved to the background by manual request.";
+        // 自动移交不是用户主动要求后台运行；仍在运行时明确提供取消方式。
+        const stopHint = error.reason === "timeout" && running
+          ? `If you do not want this task to continue in the background, stop it with bash_jobs({ action: "stop", id: "${job.id}" }). Stopping the agent alone will not stop this background task.\n`
+          : "";
         const result = {
-          content: [{ type: "text" as const, text: `${tail.content || (running ? "(no output yet)" : "(no output)")}\n\n${handoff}\nBackground task: ${job.id} (${job.status}). Full output: ${job.output_path}\n${output.truncated || tail.truncated ? "[Output preview truncated.]\n" : ""}${nextStep}` }],
+          content: [{ type: "text" as const, text: `${tail.content || (running ? "(no output yet)" : "(no output)")}\n\n${handoff}\nBackground task: ${job.id} (${job.status}). Full output: ${job.output_path}\n${output.truncated || tail.truncated ? "[Output preview truncated.]\n" : ""}${stopHint}${nextStep}` }],
           details: { format: JOB_FORMAT, fullOutputPath: job.output_path, job: preview(job) },
           structuredContent: {
             ...output, output: tail.content, truncated: output.truncated || tail.truncated,

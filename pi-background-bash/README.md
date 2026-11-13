@@ -93,7 +93,7 @@ bash({ command: "npm test", timeout: 5, hard_timeout: 600 })
 
 插件只读取设置，不自动修改配置文件。修改文件后按宿主的设置重载机制生效，或新开会话；原生 `/reload` 会清理活动任务，勿在需要保留任务时执行。配置变更只影响随后启动的命令，不重设已运行任务的期限。
 
-文本返回明确区分主动后台、前台等待超时转后台和手动移交。等待超时会写明配置的秒数，例如 `Foreground wait timed out after 180s. The command was not terminated; it was moved to the background.`，随后保留任务 ID、真实状态、日志路径和完成通知说明；不会把软等待超时表述成命令被终止。
+文本返回明确区分主动后台、前台等待超时转后台和手动移交。等待超时会写明配置的秒数，例如 `Foreground wait timed out after 180s. The command was not terminated; it was moved to the background.`，随后保留任务 ID、真实状态、日志路径和完成通知说明；自动移交后仍在运行时，额外给出带实际任务 ID 的 `bash_jobs({ action: "stop", id: "job-..." })` 停止方法，并说明停止主 agent 不会停止后台任务。主动后台、手动移交或已经终止的任务不追加这段提示；不会把软等待超时表述成命令被终止。
 
 后台返回包含：
 
