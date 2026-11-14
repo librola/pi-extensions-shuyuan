@@ -90,7 +90,7 @@ test("非法默认配置不启动命令，主动后台与显式等待不依赖�
   }
 });
 
-test("主动后台返回 job_id，完成事实与可见的模型唤醒分离", async t => {
+test("主动后台返回 job_id，可见完成事实与隐藏的模型唤醒分离", async t => {
   const h = harness();
   t.after(() => h.close());
   await h.emit("session_start");
@@ -107,13 +107,14 @@ test("主动后台返回 job_id，完成事实与可见的模型唤醒分离", a
   const completion = h.messages[0]!;
   assert.deepEqual(completion.options, { triggerTurn: false });
   assert.equal(completion.message.customType, "pi-background-bash:completion");
+  assert.equal(completion.message.display, true);
   assert.equal(completion.message.details.id, data.job_id);
   assert.equal(completion.message.details.exit_code, 0);
   assert.match(completion.message.content, /beginend/);
   const wake = h.messages[1]!;
   assert.deepEqual(wake.options, { deliverAs: "followUp", triggerTurn: true });
   assert.equal(wake.message.customType, "pi-background-bash:wakeup");
-  assert.equal(wake.message.display, true);
+  assert.equal(wake.message.display, false);
   assert.deepEqual(wake.message.details.jobIds, [data.job_id]);
   assert.equal(h.statuses.get("pi-background-bash"), undefined);
   await h.call("bash_jobs", { action: "output", id: data.job_id });
@@ -134,7 +135,7 @@ test("忙碌期间只保存完成事实，自然 settled 后批量唤醒一次",
   await h.emit("agent_end");
   await h.emit("agent_settled", h.ctx, { aborted: false });
   assert.equal(h.messages.length, 3);
-  assert.equal(h.messages[2]!.message.display, true);
+  assert.equal(h.messages[2]!.message.display, false);
   assert.deepEqual(new Set(h.messages[2]!.message.details.jobIds), new Set([first, second]));
   await h.emit("agent_settled", h.ctx, { aborted: false });
   assert.equal(h.messages.length, 3, "完成记录和唤醒不能重复");

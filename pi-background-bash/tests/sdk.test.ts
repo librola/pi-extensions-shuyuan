@@ -100,7 +100,7 @@ for (const useCodemode of [false, true]) {
     assert.equal(wake.length, 1);
     const wakeMessage = wake[0]!;
     assert.ok(wakeMessage.role === "custom");
-    assert.equal(wakeMessage.display, true, "直接和 codemode 调用的自动唤醒提示均可见");
+    assert.equal(wakeMessage.display, false, "直接和 codemode 调用的自动唤醒提示均隐藏，仍照常触发后续轮次");
     assert.deepEqual(extensionErrors, []);
     assert.equal(networkCalls, 0);
   });

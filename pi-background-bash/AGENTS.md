@@ -4,7 +4,7 @@
 
 - 使用公开的 `createBashToolDefinition` / `createLocalBashOperations`，复用宿主的 shell、环境注入、输出格式和进程树终止。
 - `timeout` 是 TUI/RPC 的前台等待期限，默认 180 秒；单次参数优先于 Pi 有效设置中的 `backgroundBash.defaultTimeoutSeconds`，配置优先于内置默认值，不自动改写设置文件。`backgroundBash.autoBackground` 默认 true；false 仅禁用自动移交、继续前台等待，不禁用显式后台或手动移交。`hard_timeout` 才终止命令。后台任务脱离发起工具调用的 AbortSignal。返回文案按实际移交原因区分主动后台、等待超时和手动移交；超时注明秒数与命令未被终止；自动移交后仍运行时给出实际任务 ID 的停止调用，说明 Stop 主 agent 不会停止后台任务。不能根据工具参数猜测手动移交原因。
-- 完成事实用 `pi.sendMessage(..., { triggerTurn: false })` 在安全边界保存；可见的唤醒提示与事实分离，忙碌时等自然 `agent_settled`，Stop 后只保存事实、不重启模型。不得伪造用户输入，禁止模型轮询等待。
+- 完成事实用 `pi.sendMessage(..., { triggerTurn: false })` 在安全边界保存；隐藏的唤醒提示与可见完成事实分离，忙碌时等自然 `agent_settled`，Stop 后只保存事实、不重启模型。不得伪造用户输入，禁止模型轮询等待。
 - 所有任务按会话隔离；关闭、reload、切换会话和树导航必须清理任务，不能向新会话发送旧任务的通知。
 - 不启动工厂期的计时器或进程，不修改全局 Pi 配置，不引入运行时依赖。
 - 注释、文档和提交信息使用中文。

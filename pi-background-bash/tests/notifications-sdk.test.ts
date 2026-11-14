@@ -101,7 +101,7 @@ for (const scenario of ["natural", "complete-before-stop", "complete-after-clear
     assert.match(completion[0].content, /completion-token/);
     const wake = stored.filter(record => record.type === "custom_message" && record.customType === "pi-background-bash:wakeup");
     assert.equal(wake.length, scenario === "natural" ? 1 : 0);
-    if (wake.length) assert.equal(wake[0].display, true);
+    if (wake.length) assert.equal(wake[0].display, false);
     assert.equal(stored.filter(record => record.type === "message" && record.message?.role === "user").length, scenario === "natural" ? 1 : 2, "不伪造用户消息");
     assert.deepEqual(errors, []);
     assert.equal(networkCalls, 0);

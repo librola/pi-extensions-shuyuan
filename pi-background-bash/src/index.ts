@@ -64,9 +64,9 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     const jobIds = [...pendingWakeIds];
     pendingWakeIds.clear();
     if (!mayWake || !jobIds.length) return;
-    // 结果已作为可见消息保存；唤醒提示也可见，让后续续答的原因明确，不重复记录或伪造用户输入。
+    // 结果已作为可见消息保存；唤醒提示隐藏以避免重复展示，仍照常触发后续轮次。
     pi.sendMessage({
-      customType: "pi-background-bash:wakeup", display: true, details: { jobIds },
+      customType: "pi-background-bash:wakeup", display: false, details: { jobIds },
       content: `Background bash tasks finished (recent IDs: ${jobIds.join(", ")}). Their saved completion records contain the final status and output. Continue from those results; do not poll to reconfirm completion.`,
     }, { deliverAs: "followUp", triggerTurn: true });
   };
