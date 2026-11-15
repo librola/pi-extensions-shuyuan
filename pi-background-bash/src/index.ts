@@ -8,6 +8,7 @@ import {
 import { Type } from "typebox";
 import { Backgrounded, DEFAULT_WAIT_SECONDS, getAutoBackground, getDefaultWaitSeconds, JobManager, MAX_OUTPUT_BYTES, type JobSnapshot } from "./jobs.ts";
 import { JOB_FORMAT, registerJobsRpc } from "./rpc.ts";
+import { createTuiJobsUi, TUI_JOBS_SHORTCUT } from "./tui-jobs.ts";
 
 const seconds = (description: string) => Type.Optional(Type.Number({ description, exclusiveMinimum: 0, maximum: 2_147_483_647 / 1000 }));
 const parameters = Type.Object({
@@ -57,6 +58,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
   let currentContext: ExtensionContext | undefined;
   let releaseLiveness: (() => void) | undefined;
   let releaseRpc: (() => void) | undefined;
+  let tuiJobs: ReturnType<typeof createTuiJobsUi> | undefined;
   let mayWake = true;
   let settling = false;
   const pendingWakeIds = new Set<string>();
@@ -79,7 +81,8 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     if (!currentContext?.hasUI || !manager) return;
     const count = manager.list().filter(job => job.background && job.status === "running").length;
     try {
-      currentContext.ui.setStatus("pi-background-bash", count ? `bash jobs: ${count}` : undefined);
+      if (currentContext.mode === "tui") tuiJobs?.refresh();
+      else currentContext.ui.setStatus("pi-background-bash", count ? `bash jobs: ${count}` : undefined);
     } catch (error) {
       // 状态栏属于可选展示，展示失败不能把已经移交的任务变成工具执行失败。
       console.error("[pi-background-bash] Status update failed:", error);
@@ -120,6 +123,11 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     });
     releaseLiveness = holdSession(ctx, manager);
     releaseRpc = registerJobsRpc(pi.events, manager, ctx.sessionManager.getSessionId(), refreshStatus);
+    if (ctx.mode === "tui") {
+      const sessionJobs = manager;
+      tuiJobs = createTuiJobsUi(ctx, () => sessionJobs.list());
+      tuiJobs.refresh();
+    }
   };
   const getManager = (ctx: ExtensionContext): JobManager => {
     if (!manager) start(ctx);
@@ -130,6 +138,11 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     mayWake = false; settling = false; pendingWakeIds.clear(); requestCompletionIds.clear(); unreadOverflow = false;
     releaseRpc?.();
     releaseRpc = undefined;
+    try { tuiJobs?.dispose(); } catch (error) {
+      // 界面已被宿主重置或清理失败时，仍必须继续终止旧会话的进程。
+      console.error("[pi-background-bash] Jobs UI cleanup failed:", error);
+    }
+    tuiJobs = undefined;
     await manager?.shutdown();
     releaseLiveness?.();
     releaseLiveness = undefined;
@@ -276,9 +289,19 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     description: "Move a running foreground bash command to the background; optional job id",
     handler: async (args, ctx) => backgroundForeground(args.trim() || undefined, ctx),
   });
+  const showJobs = async (ctx: ExtensionContext) => {
+    if (!ctx.hasUI) return;
+    const jobs = getManager(ctx);
+    if (ctx.mode === "tui" && tuiJobs) await tuiJobs.show();
+    else ctx.ui.notify(rows(jobs.list()), "info");
+  };
   pi.registerCommand("bash-jobs", {
     description: "List this session's bash jobs",
-    handler: async (_args, ctx) => { if (ctx.hasUI) ctx.ui.notify(rows(getManager(ctx).list()), "info"); },
+    handler: async (_args, ctx) => showJobs(ctx),
+  });
+  pi.registerShortcut(TUI_JOBS_SHORTCUT, {
+    description: "View this session's bash jobs",
+    handler: showJobs,
   });
   pi.registerShortcut("ctrl+shift+b", {
     description: "Move the latest running foreground bash command to the background",
