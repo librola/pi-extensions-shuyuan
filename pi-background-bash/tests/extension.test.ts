@@ -141,6 +141,62 @@ test("忙碌期间只保存完成事实，自然 settled 后批量唤醒一次",
   assert.equal(h.messages.length, 3, "完成记录和唤醒不能重复");
 });
 
+test("后续模型请求已读的完成任务不再唤醒，请求期间才完成的任务仍唤醒", async t => {
+  for (const stopReason of ["stop", "toolUse", "length"]) {
+    const h = harness();
+    t.after(() => h.close());
+    await h.emit("session_start");
+    h.ctx.isIdle = () => false;
+    await h.emit("agent_start");
+    const first = object((await h.call("bash", { command: "printf first", background: true })).structuredContent).job_id;
+    await until(() => h.messages.length === 1);
+    await h.emit("turn_start");
+    await h.emit("context_with_system", h.ctx, { messages: [{ role: "custom", ...h.messages[0]!.message }] });
+    const second = object((await h.call("bash", { command: "printf second", background: true })).structuredContent).job_id;
+    await until(() => h.messages.length === 2);
+    await h.emit("message_end", h.ctx, { message: { role: "assistant", stopReason } });
+    h.ctx.isIdle = () => true;
+    await h.emit("agent_end");
+    await h.emit("agent_settled", h.ctx, { aborted: false });
+    assert.equal(h.messages.length, 3, stopReason);
+    assert.deepEqual(h.messages[2]!.message.details.jobIds, [second], stopReason);
+    assert.ok(!h.messages[2]!.message.details.jobIds.includes(first));
+    assert.equal(h.messages[2]!.message.display, false);
+  }
+});
+
+test("只准备上下文、请求失败或引用结果文本不算已读完成记录", async t => {
+  for (const scenario of ["prepared-only", "start-only", "error", "pending", "deferred", "quoted", "foreign-details", "next-turn", "replaced-context"] as const) {
+    const h = harness();
+    try {
+      await h.emit("session_start");
+      h.ctx.isIdle = () => false;
+      await h.emit("agent_start");
+      const id = object((await h.call("bash", { command: "printf done", background: true })).structuredContent).job_id;
+      await until(() => h.messages.length === 1);
+      const completion = { role: "custom", ...h.messages[0]!.message };
+      const messages = scenario === "quoted" ? [{ role: "user", content: completion.content }]
+        : scenario === "foreign-details" ? [{ ...completion, details: { id, format: "another-extension" } }]
+        : [completion];
+      await h.emit("turn_start");
+      await h.emit("context_with_system", h.ctx, { messages });
+      if (scenario === "next-turn") await h.emit("turn_start");
+      if (scenario === "replaced-context") await h.emit("context_with_system", h.ctx, { messages: [] });
+      if (scenario === "start-only") await h.emit("message_start", h.ctx, { message: { role: "assistant", stopReason: "stop" } });
+      if (scenario !== "prepared-only" && scenario !== "start-only") await h.emit("message_end", h.ctx, {
+        message: { role: "assistant", stopReason: ["error", "pending", "deferred"].includes(scenario) ? scenario : "stop" },
+      });
+      h.ctx.isIdle = () => true;
+      await h.emit("agent_end");
+      await h.emit("agent_settled", h.ctx, { aborted: false });
+      assert.equal(h.messages.length, 2, scenario);
+      assert.deepEqual(h.messages[1]!.message.details.jobIds, [id], scenario);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
 test("长轮次的唤醒指针有界，完成事实不因截尾丢失", async t => {
   const h = harness();
   t.after(() => h.close());
@@ -157,6 +213,33 @@ test("长轮次的唤醒指针有界，完成事实不因截尾丢失", async t 
   const wake = h.messages.at(-1)!;
   assert.equal(wake.message.details.jobIds.length, 20);
   assert.ok(!wake.message.details.jobIds.includes(h.messages[0]!.message.details.id));
+});
+
+test("截尾任务不会因最近二十个任务已读而失去最后一次唤醒", async t => {
+  const h = harness();
+  t.after(() => h.close());
+  await h.emit("session_start");
+  h.ctx.isIdle = () => false;
+  for (let i = 0; i < 22; i++) {
+    await h.call("bash", { command: `printf ${i}`, background: true });
+    await until(() => h.messages.length === i + 1);
+  }
+  await h.emit("turn_start");
+  await h.emit("context_with_system", h.ctx, {
+    messages: h.messages.slice(-20).map(record => ({ role: "custom", ...record.message })),
+  });
+  await h.emit("message_end", h.ctx, { message: { role: "assistant", stopReason: "stop" } });
+  h.ctx.isIdle = () => true;
+  await h.emit("agent_end");
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  assert.equal(h.messages.length, 23);
+  const wake = h.messages.at(-1)!;
+  assert.equal(wake.message.customType, "pi-background-bash:wakeup");
+  assert.deepEqual(wake.message.details.jobIds, []);
+  assert.match(wake.message.content, /^Background bash tasks finished\. Their saved completion records/);
+  assert.equal(wake.message.display, false);
+  await h.emit("agent_settled", h.ctx, { aborted: false });
+  assert.equal(h.messages.length, 23, "截尾补唤醒也只发送一次");
 });
 
 test("settled 分发和 Stop 之后完成均不唤醒，新的运行恢复自动通知", async t => {

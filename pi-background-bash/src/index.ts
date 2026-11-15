@@ -60,14 +60,18 @@ export default function backgroundBash(pi: ExtensionAPI): void {
   let mayWake = true;
   let settling = false;
   const pendingWakeIds = new Set<string>();
+  const requestCompletionIds = new Set<string>();
+  let unreadOverflow = false;
   const flushWake = () => {
     const jobIds = [...pendingWakeIds];
+    const overflow = unreadOverflow;
     pendingWakeIds.clear();
-    if (!mayWake || !jobIds.length) return;
+    unreadOverflow = false;
+    if (!mayWake || (!jobIds.length && !overflow)) return;
     // 结果已作为可见消息保存；唤醒提示隐藏以避免重复展示，仍照常触发后续轮次。
     pi.sendMessage({
       customType: "pi-background-bash:wakeup", display: false, details: { jobIds },
-      content: `Background bash tasks finished (recent IDs: ${jobIds.join(", ")}). Their saved completion records contain the final status and output. Continue from those results; do not poll to reconfirm completion.`,
+      content: `Background bash tasks finished${jobIds.length ? ` (recent IDs: ${jobIds.join(", ")})` : ""}. Their saved completion records contain the final status and output. Continue from those results; do not poll to reconfirm completion.`,
     }, { deliverAs: "followUp", triggerTurn: true });
   };
 
@@ -82,7 +86,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     }
   };
   const start = (ctx: ExtensionContext) => {
-    mayWake = true; settling = false; pendingWakeIds.clear();
+    mayWake = true; settling = false; pendingWakeIds.clear(); requestCompletionIds.clear(); unreadOverflow = false;
     currentContext = ctx;
     manager = new JobManager({
       exec: (command, cwd, options) => createLocalBashOperations({ shellPath: pi.getSettings().shellPath }).exec(command, cwd, options),
@@ -105,8 +109,11 @@ export default function backgroundBash(pi: ExtensionAPI): void {
       }, { triggerTurn: false });
       if (mayWake) {
         pendingWakeIds.add(job.id);
-        // 完成事实全部保存，唤醒指针只保留最近 20 个，避免长轮次积累无界状态。
-        if (pendingWakeIds.size > 20) pendingWakeIds.delete(pendingWakeIds.values().next().value!);
+        // 指针仍有界；被截尾的未确认任务另保留一个标记，不能因最近任务已读而漏掉唤醒。
+        if (pendingWakeIds.size > 20) {
+          pendingWakeIds.delete(pendingWakeIds.values().next().value!);
+          unreadOverflow = true;
+        }
         if (!settling && currentContext?.isIdle()) flushWake();
       }
       refreshStatus();
@@ -120,7 +127,7 @@ export default function backgroundBash(pi: ExtensionAPI): void {
     return manager!;
   };
   const shutdown = async () => {
-    mayWake = false; settling = false; pendingWakeIds.clear();
+    mayWake = false; settling = false; pendingWakeIds.clear(); requestCompletionIds.clear(); unreadOverflow = false;
     releaseRpc?.();
     releaseRpc = undefined;
     await manager?.shutdown();
@@ -133,13 +140,34 @@ export default function backgroundBash(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => { await shutdown(); start(ctx); });
   pi.on("session_shutdown", shutdown);
   pi.on("session_tree", async (_event, ctx) => { await shutdown(); start(ctx); });
-  pi.on("agent_start", () => { mayWake = true; settling = false; });
+  pi.on("turn_start", () => { requestCompletionIds.clear(); });
+  pi.on("context_with_system", event => {
+    // 在所有 context 变换之后取本次请求的候选，不因写入历史、普通文本引用或预热请求就确认已读。
+    requestCompletionIds.clear();
+    for (const message of event.messages) {
+      if (message.role !== "custom" || message.customType !== "pi-background-bash:completion") continue;
+      const details = message.details;
+      if (!details || typeof details !== "object" || Array.isArray(details)) continue;
+      const { format, id } = details as { format?: unknown; id?: unknown };
+      if (format === JOB_FORMAT && typeof id === "string" && pendingWakeIds.has(id)) requestCompletionIds.add(id);
+    }
+  });
+  pi.on("message_end", event => {
+    if (event.message.role !== "assistant") return;
+    // 正常响应才确认这次请求使用过候选结果；失败、占位响应以及请求期间才完成的任务仍待唤醒。
+    if (["stop", "toolUse", "length"].includes(event.message.stopReason)) {
+      for (const id of requestCompletionIds) pendingWakeIds.delete(id);
+    }
+    requestCompletionIds.clear();
+  });
+  pi.on("agent_start", () => { mayWake = true; settling = false; requestCompletionIds.clear(); });
   // agent_end 后 SDK 仍可能重试，且 settled 的其他处理器可能异步运行；此时不提前唤醒。
-  pi.on("agent_end", () => { settling = true; });
+  pi.on("agent_end", () => { settling = true; requestCompletionIds.clear(); });
   pi.on("agent_settled", event => {
     mayWake = !event.aborted;
     settling = false;
-    if (event.aborted) pendingWakeIds.clear();
+    requestCompletionIds.clear();
+    if (event.aborted) { pendingWakeIds.clear(); unreadOverflow = false; }
     else flushWake();
   });
 
