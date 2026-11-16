@@ -89,12 +89,19 @@ test("CLI 摘要只计后台运行任务，命令展开的是同一个 widget �
   const text = widget.render(80).join("\n");
   assert.match(text, /job-00000000.*BG.*running/);
   assert.ok(text.includes("printf task-0"));
-  assert.match(text, /job-00000001.*FG/);
+  assert.ok(!text.includes("job-00000001"), "前台任务不进入 widget");
+  assert.ok(!text.includes("job-00000002"), "已结束的后台任务不进入 widget");
   view.toggle();
   assert.equal(widget.render(80).length, 1);
   snapshots[0]!.status = "completed";
   view.refresh();
-  assert.match(widget.render(80)[0]!, /0 background running/);
+  assert.equal(e.widgets.size, 0, "最后一个后台任务结束即隐藏，即使前台任务仍在运行");
+  assert.deepEqual(widget.render(80), []);
+  view.show(); view.toggle(); view.refresh();
+  assert.equal(e.widgets.size, 0, "命令和快捷键不能强制显示历史记录");
+  snapshots[0]!.status = "running";
+  view.refresh();
+  assert.equal(e.widgets.get("pi-background-bash")!.render(80).length, 1, "下一批任务默认收起");
   snapshots = [];
   view.refresh();
   assert.equal(e.widgets.size, 0);
@@ -130,7 +137,11 @@ test("widget 的窄屏、分页和控制字符安全，导航不修改任务数�
 });
 
 test("RPC widget 总是提供完整列表，不依赖 TUI 鼠标、焦点、快捷键或弹层", t => {
-  const snapshots = jobs(30);
+  const snapshots = jobs(36);
+  snapshots[30]!.background = false;
+  const terminalStates = ["completed", "failed", "stopped", "timed_out", "output_limit"] as const;
+  terminalStates.forEach((status, index) => { snapshots[31 + index]!.status = status; });
+  let removed = 0;
   let widget: Component & { dispose?(): void };
   const ctx = {
     mode: "rpc", hasUI: true,
@@ -138,6 +149,7 @@ test("RPC widget 总是提供完整列表，不依赖 TUI 鼠标、焦点、快�
       setWidget: (_key: string, factory?: (tui: TUI, theme: Theme) => Component) => {
         if (factory) widget = factory({ terminal: { rows: 4, columns: 80 }, requestRender() {} } as unknown as TUI,
           { fg: (_color: string, text: string) => text } as Theme);
+        else removed++;
       },
       onTerminalInput: () => { throw new Error("RPC cannot register terminal input"); },
       custom: () => { throw new Error("RPC cannot open the CLI modal"); },
@@ -148,10 +160,17 @@ test("RPC widget 总是提供完整列表，不依赖 TUI 鼠标、焦点、快�
   view.refresh();
   const lines = widget!.render(80);
   assert.equal(lines.length, 62, "完整的 30 个任务不会按虚拟终端行数裁剪");
-  for (const job of snapshots) assert.ok(lines.join("\n").includes(job.id));
+  for (const job of snapshots.slice(0, 30)) assert.ok(lines.join("\n").includes(job.id));
+  for (const job of snapshots.slice(30)) assert.ok(!lines.join("\n").includes(job.id));
   assert.ok(!lines.join("\n").includes("Ctrl+Shift+J"));
   assert.ok(!lines.join("\n").includes("Esc:"));
   assert.equal(widget!.handleMouse, undefined);
+  snapshots.slice(0, 30).forEach(job => { job.status = "completed"; });
+  view.refresh();
+  assert.equal(removed, 1);
+  assert.deepEqual(widget!.render(80), []);
+  view.show(); view.toggle(); view.refresh();
+  assert.equal(removed, 1, "仅有前台和历史任务时，命令不会重新注册 RPC widget");
 });
 
 test("widget 工厂重建释放旧实例，并保留原按键归属", t => {
@@ -198,7 +217,8 @@ test("运行期间刷新耗时，全部结束或会话清理后不保留定时�
   view.refresh();
   assert.equal(ticks.length, 1);
   snapshots[0]!.status = "completed";
-  view.refresh();
+  ticks[0]!();
+  assert.equal(e.widgets.size, 0, "周期刷新也会移除没有运行后台任务的 widget");
   assert.ok(cleared.length >= 1);
   snapshots[0]!.status = "running";
   view.refresh();
@@ -282,24 +302,76 @@ test("RPC 命令提供 widget，不再只是数量状态或文本通知", async 
   assert.equal(h.messages.length, 0);
 });
 
-test("前台命令开始和结束也刷新现有 widget，但不改变后台完成消息", async t => {
+test("前台任务和历史完成记录不能撑开 widget，bash_jobs 仍可查询完整记录", async t => {
   const e = uiHarness();
   const h = harness({ mode: "tui" });
   Object.assign(h.ctx.ui, e.ui);
-  const editor = { render: () => ["Editor"], invalidate() {} };
-  e.tui.setFocus(editor);
   t.after(async () => { await h.close(); e.tui.stop(); });
   await h.emit("session_start"); h.ctx.isIdle = () => false;
-  await h.call("bash", { command: "printf background", background: true });
+  const result = await h.call("bash", { command: "printf background", background: true });
+  const id = object(result.structuredContent).job_id;
   await until(() => h.messages.length === 1);
-  await h.commands.get("bash-jobs").handler("", h.ctx);
-  const widget = e.widgets.get("pi-background-bash")!;
+  assert.equal(e.widgets.size, 0);
   const foreground = h.call("bash", { command: "sleep 0.15; printf foreground", timeout: 1 });
-  await until(() => /FG running/.test(widget.render(80).join("\n")));
-  const result = await foreground;
-  assert.equal(object(result.structuredContent).output, "foreground");
-  assert.match(widget.render(80).join("\n"), /FG completed/);
-  assert.equal(h.messages.length, 1, "前台刷新不能额外生成完成通知");
+  const running = object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs as JobSnapshot[];
+  assert.ok(running.some(job => !job.background && job.status === "running"));
+  await h.commands.get("bash-jobs").handler("", h.ctx);
+  assert.equal(e.widgets.size, 0, "前台命令运行时也不能显示 widget");
+  const finished = await foreground;
+  assert.equal(object(finished.structuredContent).output, "foreground");
+  const history = object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs as JobSnapshot[];
+  assert.equal(history.length, 2);
+  assert.ok(history.some(job => job.id === id && job.background && job.status === "completed"));
+  assert.ok(history.some(job => !job.background && job.status === "completed"));
+  assert.equal(e.widgets.size, 0);
+  assert.equal(h.messages.length, 1, "显示过滤不能改变完成通知");
+});
+
+test("旧任务结束后迟到的工厂不能恢复 widget 或覆盖下一批任务", t => {
+  const snapshots = jobs();
+  const factories: Array<(tui: TUI, theme: Theme) => Component> = [];
+  const ctx = { mode: "rpc", hasUI: true, ui: {
+    setWidget: (_key: string, value?: (tui: TUI, theme: Theme) => Component) => { if (value) factories.push(value); },
+  } } as unknown as ExtensionContext;
+  let intervals = 0;
+  t.mock.method(globalThis, "setInterval", () => { intervals++; return { unref() {} }; });
+  t.mock.method(globalThis, "clearInterval", () => {});
+  const view = createJobsWidget(ctx, () => snapshots);
+  t.after(() => view.dispose());
+  view.refresh();
+  snapshots[0]!.status = "completed";
+  view.refresh();
+  const tui = { terminal: { rows: 4, columns: 80 }, requestRender() {} } as unknown as TUI;
+  const theme = { fg: (_color: string, text: string) => text } as Theme;
+  assert.deepEqual(factories[0]!(tui, theme).render(80), []);
+  assert.equal(intervals, 0);
+  snapshots[0]!.status = "running";
+  view.refresh();
+  const current = factories[1]!(tui, theme);
+  assert.equal(intervals, 1);
+  assert.deepEqual(factories[0]!(tui, theme).render(80), []);
+  assert.equal(intervals, 1, "旧工厂不能为新一批任务重启旧计时器");
+  assert.ok(current.render(80).join("\n").includes(snapshots[0]!.id));
+});
+
+test("周期隐藏 widget 的 UI 异常不抛出，计时器仍先清理", t => {
+  const e = uiHarness();
+  const snapshots = jobs();
+  let tick: () => void;
+  let cleared = 0;
+  t.mock.method(globalThis, "setInterval", (callback: () => void) => { tick = callback; return { unref() {} }; });
+  t.mock.method(globalThis, "clearInterval", () => { cleared++; });
+  const errors = t.mock.method(console, "error", () => {});
+  const view = createJobsWidget(e.ctx, () => snapshots);
+  view.refresh();
+  const original = e.ui.setWidget;
+  e.ui.setWidget = () => { throw new Error("UI already reset"); };
+  snapshots[0]!.status = "completed";
+  assert.doesNotThrow(() => tick!());
+  assert.equal(cleared, 1);
+  assert.equal(errors.mock.callCount(), 1);
+  e.ui.setWidget = original;
+  view.dispose(); e.tui.stop();
 });
 
 test("原生 widget 使用宿主 TUI，包和两个锁文件保留一致 peer 声明", () => {

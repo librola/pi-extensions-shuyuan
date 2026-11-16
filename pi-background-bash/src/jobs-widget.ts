@@ -43,27 +43,23 @@ class JobsWidget implements Component {
 
   update(): void {
     if (this.disposed) return;
-    const active = this.getJobs().some(job => job.status === "running");
-    // 只有可见 widget 中存在运行任务时刷新耗时；历史记录不会留下空转定时器。
-    if (active && !this.timer) {
-      this.timer = setInterval(() => this.update(), 1000);
+    if (!this.getJobs().length) { this.collapse(); return; }
+    // 最后一个后台任务结束时移除 widget；展示异常不能干扰任务执行。
+    if (!this.timer) {
+      this.timer = setInterval(() => {
+        try { this.update(); } catch (error) { console.error("[pi-background-bash] Widget update failed:", error); }
+      }, 1000);
       this.timer.unref();
-    } else if (!active && this.timer) {
-      clearInterval(this.timer); this.timer = undefined;
     }
     this.tui.requestRender();
   }
 
   render(width: number): string[] {
     if (this.disposed) return [];
-    const jobs = [...this.getJobs()].sort((a, b) => {
-      const priorityA = (a.status === "running" ? 0 : 2) + (a.background ? 0 : 1);
-      const priorityB = (b.status === "running" ? 0 : 2) + (b.background ? 0 : 1);
-      return priorityA - priorityB || b.started_at - a.started_at;
-    });
+    const jobs = [...this.getJobs()].sort((a, b) => b.started_at - a.started_at);
     this.jobCount = jobs.length;
-    const count = jobs.filter(job => job.background && job.status === "running").length;
-    const heading = this.theme.fg("accent", `Bash jobs: ${count} background running`);
+    if (!jobs.length) return [];
+    const heading = this.theme.fg("accent", `Bash jobs: ${jobs.length} background running`);
     if (this.interactive && !this.getExpanded()) {
       return [truncateToWidth(`${heading} ${this.theme.fg("dim", "Ctrl+Shift+J: expand")}`, width)];
     }
@@ -72,15 +68,14 @@ class JobsWidget implements Component {
     this.offset = Math.max(0, Math.min(this.offset, Math.max(0, jobs.length - this.windowSize)));
     const shown = this.interactive ? jobs.slice(this.offset, this.offset + this.windowSize) : jobs;
     const now = Date.now();
-    const lines = [heading, this.theme.fg("dim", "BG: background · FG: foreground · read-only")];
+    const lines = [heading, this.theme.fg("dim", "BG: background · read-only")];
     for (const job of shown) {
-      const elapsed = Math.max(0, ((job.ended_at ?? now) - job.started_at) / 1000).toFixed(1);
-      lines.push(`${job.id} ${job.background ? "BG" : "FG"} ${job.status}${job.exit_code !== undefined ? ` (${job.exit_code})` : ""} ${elapsed}s`);
+      const elapsed = Math.max(0, (now - job.started_at) / 1000).toFixed(1);
+      lines.push(`${job.id} BG running ${elapsed}s`);
       // 命令是数据，不能让控制字符变成终端指令；按显示列截断，保留完整字符。
       lines.push(this.theme.fg("muted", `  ${truncateToWidth(replaceControlCharacters(job.command), 200)}`));
     }
-    if (!shown.length) lines.push(this.theme.fg("dim", "No bash jobs in this session."));
-    if (this.interactive) lines.push(this.theme.fg("dim", `${jobs.length ? `${this.offset + 1}-${this.offset + shown.length}/${jobs.length} · ` : ""}↑↓ / PgUp PgDn: scroll · Esc: collapse`));
+    if (this.interactive) lines.push(this.theme.fg("dim", `${this.offset + 1}-${this.offset + shown.length}/${jobs.length} · ↑↓ / PgUp PgDn: scroll · Esc: collapse`));
     return lines.map(line => truncateToWidth(line, width));
   }
 
@@ -111,27 +106,31 @@ export function createJobsWidget(ctx: ExtensionContext, getJobs: () => JobSnapsh
   let disposed = false;
   let registered = false;
   let expanded = false;
-  let requested = false;
+  let generation = 0;
   let widget: JobsWidget | undefined;
-  const collapse = () => { expanded = false; requested = false; refresh(); };
+  const getRunningJobs = () => getJobs().filter(job => job.background && job.status === "running");
+  const collapse = () => { expanded = false; refresh(); };
   const unsubscribe = interactive ? ctx.ui.onTerminalInput(data => {
     if (!disposed && widget?.handleInput(data)) return { consume: true };
   }) : undefined;
 
   const refresh = () => {
     if (disposed) return;
-    if (!requested && !getJobs().some(job => job.background)) {
+    if (!getRunningJobs().length) {
+      generation++; expanded = false;
       widget?.dispose(); widget = undefined;
       if (registered) ctx.ui.setWidget(WIDGET_KEY, undefined);
       registered = false;
       return;
     }
     if (!registered) {
+      const currentGeneration = ++generation;
       ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
-        if (disposed) return new Text("");
+        // 已结束的一批任务不能通过迟到工厂重新显示，或覆盖后来新启动的任务。
+        if (disposed || currentGeneration !== generation || !getRunningJobs().length) return new Text("");
         // 重建先继承按键归属，再清理旧实例；不假定宿主会代管它的计时器。
         const previous = widget;
-        widget = new JobsWidget(tui, theme, getJobs, () => expanded, collapse, interactive, previous);
+        widget = new JobsWidget(tui, theme, getRunningJobs, () => expanded, collapse, interactive, previous);
         previous?.dispose();
         widget.update();
         return widget;
@@ -142,7 +141,7 @@ export function createJobsWidget(ctx: ExtensionContext, getJobs: () => JobSnapsh
   };
   const show = () => {
     if (disposed) return;
-    requested = true; expanded = true;
+    expanded = true;
     refresh(); widget?.captureInputOwner();
   };
   const toggle = () => {
@@ -150,7 +149,7 @@ export function createJobsWidget(ctx: ExtensionContext, getJobs: () => JobSnapsh
     if (expanded) collapse(); else show();
   };
   const dispose = () => {
-    disposed = true; widget?.dispose(); unsubscribe?.();
+    disposed = true; generation++; widget?.dispose(); unsubscribe?.();
     if (registered) ctx.ui.setWidget(WIDGET_KEY, undefined);
     registered = false; widget = undefined;
   };
