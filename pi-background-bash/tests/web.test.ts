@@ -87,12 +87,19 @@ test("Web 注册只占顶部下拉入口，不注册侧栏面板，注册和样�
 
 test("打包声明只服务预构建 Web 资产，桥和原生源代码不公开", () => {
   const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(manifest.name, "@librola33/pi-background-bash");
+  assert.equal(manifest.private, undefined);
+  assert.equal(manifest.publishConfig.access, "public");
+  assert.equal(manifest.piWeb.id, "pi-background-bash");
   assert.equal(manifest.pi.extensions[0], "./src/index.ts");
   assert.equal(manifest.piWeb.entry, "web/browser.js");
   assert.ok(!manifest.piWeb.assets.includes(manifest.piWeb.bridge.entry));
   assert.ok(!manifest.piWeb.assets.some((path: string) => path.startsWith("src/") || path.endsWith(".d.ts")));
   assert.ok(manifest.piWeb.bridge.actions.every((action: { session: string }) => action.session === "active"));
   const permissions = manifest.piWeb.bridge.permissions.events[0];
+  assert.equal(permissions.package, manifest.name);
+  assert.equal(permissions.request, "pi-background-bash:rpc:v1:request");
+  assert.equal(permissions.replyPrefix, "pi-background-bash:rpc:v1:reply:");
   assert.deepEqual(permissions.queryMethods, ["ping", "list", "status", "output"]);
   assert.ok(!permissions.queryMethods.includes("stop"));
 });

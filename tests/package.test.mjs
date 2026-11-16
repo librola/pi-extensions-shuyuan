@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,4 +88,41 @@ test("统一 tarball 包含双端资源，真实 Pi 加载器可从包声明发�
     manifest.pi.extensions.map(path => resolve(packageRoot, path)).sort());
   assert.ok(extensions.some(extension => extension.commands.has("error-retry")));
   assert.ok(extensions.some(extension => extension.tools.has("bash_jobs")));
+});
+
+test("作用域独立 tarball 在真实安装目录内加载，Web 目标身份与原生包一致", async t => {
+  const temporary = mkdtempSync(join(tmpdir(), "pi-background-bash-scoped-package-"));
+  t.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const packed = JSON.parse(npm(["pack", "--workspace=pi-background-bash", "--ignore-scripts", "--json", "--pack-destination", temporary]))[0];
+  assert.equal(packed.name, "@librola33/pi-background-bash");
+  const installed = join(temporary, "node_modules", ...packed.name.split("/"));
+  mkdirSync(installed, { recursive: true });
+  const extracted = spawnSync("tar", ["-xzf", join(temporary, packed.filename), "--strip-components=1", "-C", installed], { encoding: "utf8" });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  const installedManifest = JSON.parse(readFileSync(join(installed, "package.json"), "utf8"));
+  assert.equal(installedManifest.name, background.name);
+  assert.equal(installedManifest.private, undefined);
+  assert.equal(installedManifest.piWeb.id, "pi-background-bash");
+  assert.ok(installedManifest.files.includes("CHANGELOG.md"));
+  assert.ok(existsSync(join(installed, "CHANGELOG.md")));
+  for (const asset of [...installedManifest.piWeb.assets, installedManifest.piWeb.bridge.entry]) {
+    assert.ok(existsSync(join(installed, asset)), asset);
+  }
+  for (const permission of manifest.piWeb.bridge.permissions.events) {
+    assert.equal(permission.package, installedManifest.name);
+    assert.equal(permission.request, "pi-background-bash:rpc:v1:request");
+  }
+  // 模拟 npm 的作用域目录布局，仍由真实加载器解析宿主 SDK，不安装另一份运行时。
+  const loader = new DefaultResourceLoader({
+    cwd: temporary, agentDir: join(temporary, "agent"),
+    settingsManager: SettingsManager.inMemory({ packages: [installed] }),
+    noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+  });
+  await loader.reload();
+  const result = loader.getExtensions();
+  assert.deepEqual(result.errors, []);
+  const extensions = result.extensions.filter(extension => extension.path.startsWith(installed + "/"));
+  assert.equal(extensions.length, 1);
+  assert.ok(extensions[0].commands.has("bash-jobs"));
+  assert.ok(extensions[0].tools.has("bash_jobs"));
 });

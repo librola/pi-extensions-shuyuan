@@ -34,7 +34,8 @@ function npm(args) {
 const packed = JSON.parse(npm(["pack", "--ignore-scripts", "--json", "--pack-destination", root]))[0];
 const prefix = join(root, "installed");
 npm(["install", "--prefix", prefix, "--ignore-scripts", "--legacy-peer-deps", "--omit=dev", "--no-audit", "--no-fund", join(root, packed.filename)]);
-const installed = join(prefix, "node_modules", "pi-background-bash");
+// 发布包使用 npm 作用域名称，安装目录按实际包名解析；插件事件与界面 ID 保持不变。
+const installed = join(prefix, "node_modules", ...packed.name.split("/"));
 assert.ok(existsSync(join(installed, "web/browser.js")));
 assert.ok(existsSync(join(installed, "src/rpc.ts")));
 // 新计数仅复用 v1 list；模拟已有 0.2.0 原生实例，证明无需为 Web 更新重启任务。

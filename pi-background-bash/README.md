@@ -14,7 +14,15 @@
 pi install git:github.com/librola/pi-extensions-shuyuan
 ```
 
-仅安装本扩展时：
+从 npm 仅安装本扩展：
+
+```bash
+pi install npm:@librola33/pi-background-bash
+```
+
+注意：npm 包名为 **`@librola33/pi-background-bash`**；无作用域的 `pi-background-bash` 是其他维护者的项目，不要混用。目录名、工具与命令名、事件协议和 Web 界面 ID 仍为原来的名称。
+
+也可安装本地子目录：
 
 ```bash
 # 加入全局 Pi 包列表；此命令会修改 ~/.pi/agent/settings.json
@@ -47,7 +55,7 @@ CLI 使用宿主提供的 `pi-tui >=1.5.2 <2`，不打包另一套 TUI 或增加
 
 同一个包同时声明 `pi.extensions` 和 `piWeb`。CLI 只加载原生入口；你在 `/data/repos/pi-web/hkk/pi-web-ext` 中提供的 Web 扩展宿主加载浏览器入口和受限桥接，不需要修改或重新构建 Pi Web。
 
-1. 用上面的本地路径安装命令登记为持久 Pi 包，CLI 与 Web 服务使用同一个 agent 目录。
+1. 用上面的 npm 或本地路径安装命令登记为持久 Pi 包，CLI 与 Web 服务使用同一个 agent 目录。Web 桥的目标包身份为 `@librola33/pi-background-bash`，公开事件频道不变。
 2. 如果原生实例尚不支持 `0.2.x` 公共协议，先停止需要保留的活动任务，再执行原生 `/reload`；原生 reload 会清理本插件的活动任务。`0.2.1` 的顶部计数兼容已加载的 `0.2.0` 实例，只更新 Web 资源即可，无须重启正在运行的任务。
 3. Web 端重新聚焦、使用 Web Reload 或刷新页面，发现新版 `piWeb` 资源。Web Reload 不替代原生 reload，也不会重启任务引擎。
 
@@ -177,7 +185,7 @@ bash_jobs({ action: "stop", id: "job-0123abcd" })
 
 ```bash
 cd ~/pi-dev/pi-extensions-shuyuan/pi-background-bash
-npm ci --ignore-scripts --legacy-peer-deps
+npm ci --include=dev --ignore-scripts --legacy-peer-deps
 npm run check
 ```
 

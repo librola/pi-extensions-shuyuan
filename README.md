@@ -15,6 +15,15 @@
 pi install git:github.com/librola/pi-extensions-shuyuan
 ```
 
+两个扩展也可以从 npm 分别安装：
+
+```bash
+pi install npm:pi-error-retry
+pi install npm:@librola33/pi-background-bash
+```
+
+无作用域的 `pi-background-bash` 是其他维护者的项目，不是本仓库的扩展；不要与本地子目录或统一 Git 包重复加载。
+
 或安装本地仓库：
 
 ```bash
@@ -23,7 +32,7 @@ pi install ~/pi-dev/pi-extensions-shuyuan
 
 以上命令会修改 Pi 的包配置；现有会话需执行 `/reload`，或新开会话。不要同时加载原来单独安装的同名扩展，避免重复注册和恢复逻辑竞争。本仓库不会自动修改已有 Pi 配置。
 
-仓库根清单声明两个原生入口，并复用 `pi-background-bash` 的 Web 资源。支持 `piWeb` API v1 的扩展版 Pi Web 可从持久 Pi 包声明自动发现顶部任务下拉框；CLI 不加载浏览器代码。Web 公共协议、包身份和兼容版本保持不变。
+仓库根清单声明两个原生入口，并复用 `pi-background-bash` 的 Web 资源。支持 `piWeb` API v1 的扩展版 Pi Web 可从持久 Pi 包声明自动发现顶部任务下拉框；CLI 不加载浏览器代码。Web 公共协议和兼容版本保持不变；后台 Bash 的目标 npm 包身份为 `@librola33/pi-background-bash`。
 
 仅需一个扩展时，也可安装其本地子目录：
 

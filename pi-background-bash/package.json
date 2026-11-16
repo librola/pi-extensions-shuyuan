@@ -1,7 +1,6 @@
 {
-  "name": "pi-background-bash",
+  "name": "@librola33/pi-background-bash",
   "version": "0.2.2",
-  "private": true,
   "description": "Pi 的受管后台 Bash：软等待超时、完成唤醒和任务查询",
   "repository": {
     "type": "git",
@@ -25,7 +24,11 @@
       "./src/index.ts"
     ]
   },
-  "files": ["src", "web", "README.md"],
+  "files": ["src", "web", "README.md", "CHANGELOG.md"],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "piWeb": {
     "apiVersion": 1,
     "lifecycle": "session",
@@ -45,7 +48,7 @@
       ],
       "permissions": {
         "events": [{
-          "package": "pi-background-bash", "version": ">=0.2.0 <0.3.0",
+          "package": "@librola33/pi-background-bash", "version": ">=0.2.0 <0.3.0",
           "request": "pi-background-bash:rpc:v1:request", "replyPrefix": "pi-background-bash:rpc:v1:reply:",
           "methods": ["ping", "list", "status", "output", "stop", "background"],
           "queryMethods": ["ping", "list", "status", "output"]
