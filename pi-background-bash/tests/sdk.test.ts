@@ -72,7 +72,7 @@ for (const useCodemode of [false, true]) {
     });
     const extensionErrors: unknown[] = [];
     await session.bindExtensions({
-      mode: "rpc", uiContext: { setStatus: () => {}, notify: () => {} } as unknown as ExtensionUIContext,
+      mode: "rpc", uiContext: { setStatus: () => {}, setWidget: () => {}, notify: () => {} } as unknown as ExtensionUIContext,
       onError: error => extensionErrors.push(error),
     });
     assert.ok(session.getActiveToolNames().includes("bash"));

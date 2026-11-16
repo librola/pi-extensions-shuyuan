@@ -82,7 +82,7 @@ for (const useCodemode of [false, true]) {
       ({ session } = await createAgentSession({ cwd: root, agentDir: root, settingsManager, resourceLoader: loader, modelRuntime: runtime, model,
         sessionManager: SessionManager.create(root, join(root, "sessions")), tools: ["bash", "bash_jobs", ...(useCodemode ? ["codemode"] : [])], thinkingLevel: "off" }));
       const errors: unknown[] = [];
-      await session.bindExtensions({ mode: "rpc", uiContext: { setStatus: () => {}, notify: () => {} } as unknown as ExtensionUIContext, onError: error => errors.push(error) });
+      await session.bindExtensions({ mode: "rpc", uiContext: { setStatus: () => {}, setWidget: () => {}, notify: () => {} } as unknown as ExtensionUIContext, onError: error => errors.push(error) });
       const running = session.prompt("Run both test commands.");
       await until(async () => (await rpc(events, "list")).data.jobs.length === (scenario === "mixed" ? 3 : 2));
       const jobs = (await rpc(events, "list")).data.jobs;

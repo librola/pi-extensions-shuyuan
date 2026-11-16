@@ -22,13 +22,19 @@ export function harness(options: { cwd?: string; sessionId?: string; mode?: "rpc
   const shortcuts = new Map<string, any>();
   const messages: Array<{ message: any; options: any }> = [];
   const statuses = new Map<string, string | undefined>();
+  const widgets = new Map<string, { content: unknown; options: unknown }>();
   const notifications: string[] = [];
   const mode = options.mode ?? "rpc";
   const ctx = {
     cwd, mode, hasUI: mode === "rpc" || mode === "tui", isIdle: () => true,
     model: { provider: "test-provider", id: "test-model" }, thinkingLevel: "high",
     sessionManager: { getSessionId: () => options.sessionId ?? "session-test", getSessionFile: () => undefined },
-    ui: { setStatus: (key: string, value?: string) => statuses.set(key, value), notify: (value: string) => notifications.push(value) },
+    ui: {
+      setStatus: (key: string, value?: string) => statuses.set(key, value),
+      setWidget: (key: string, content: unknown, options: unknown) => { if (content === undefined) widgets.delete(key); else widgets.set(key, { content, options }); },
+      onTerminalInput: () => () => {},
+      notify: (value: string) => notifications.push(value),
+    },
   } as unknown as ExtensionToolContext;
   const events = createEventBus();
   const api = {
@@ -50,7 +56,7 @@ export function harness(options: { cwd?: string; sessionId?: string; mode?: "rpc
     for (const handler of handlers.get(event) ?? []) await handler({ type: event, reason: "startup", ...data }, eventContext);
   };
   return {
-    cwd, ctx, api, events, tools, commands, shortcuts, messages, statuses, notifications, emit,
+    cwd, ctx, api, events, tools, commands, shortcuts, messages, statuses, widgets, notifications, emit,
     async call(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`No tool ${name}`);

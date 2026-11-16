@@ -102,7 +102,8 @@ test("主动后台返回 job_id，可见完成事实与隐藏的模型唤醒分�
   assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /Started in the background as requested\./);
   assert.doesNotMatch(result.content[0]!.type === "text" ? result.content[0].text : "", /If you do not want this task/);
   assert.match(result.content[0]!.type === "text" ? result.content[0].text : "", /do not poll/);
-  assert.equal(h.statuses.get("pi-background-bash"), "bash jobs: 1");
+  assert.equal(h.statuses.get("pi-background-bash"), undefined);
+  assert.ok(h.widgets.has("pi-background-bash"), "RPC 通过原生 widget 提供可展开的任务信息");
   await until(() => h.messages.length === 2);
   const completion = h.messages[0]!;
   assert.deepEqual(completion.options, { triggerTurn: false });
