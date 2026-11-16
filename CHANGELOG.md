@@ -1,5 +1,10 @@
 # 更新日志
 
+## 0.2.2
+
+- 后台 Bash 更新为 `@librola33/pi-background-bash@0.2.3`。
+- 原生 widget 只显示正在运行的后台任务，最后一个后台任务结束后隐藏；任务历史查询与完成通知不变。
+
 ## 0.2.1
 
 - 后台 Bash 的 npm 包名使用 `@librola33/pi-background-bash@0.2.2`，避免与其他维护者的同名包冲突。
