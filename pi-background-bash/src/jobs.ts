@@ -43,7 +43,14 @@ interface Job extends JobSnapshot {
   notified: boolean;
   stopReason?: "stopped" | "output_limit" | "failed";
 }
+export interface JobLogLifecycle {
+  directory(): string;
+  created(job: JobSnapshot, toolCallId?: string): void;
+  finished(job: JobSnapshot): void;
+  wasCollected?(path: string): boolean;
+}
 export interface RunOptions {
+  toolCallId?: string;
   background?: boolean;
   autoBackground?: boolean;
   timeout?: number;
@@ -101,14 +108,16 @@ export class JobManager {
   private readonly onComplete: (job: JobSnapshot) => void;
   private readonly maxLogBytes: number;
   private readonly maxRunning: number;
+  private readonly logs?: JobLogLifecycle;
   private logDirectory?: string;
   private closed = false;
 
-  constructor(operations: BashOperations, onComplete: (job: JobSnapshot) => void, limits = { maxLogBytes: MAX_LOG_BYTES, maxRunning: 16 }) {
+  constructor(operations: BashOperations, onComplete: (job: JobSnapshot) => void, limits = { maxLogBytes: MAX_LOG_BYTES, maxRunning: 16 }, logs?: JobLogLifecycle) {
     this.operations = operations;
     this.onComplete = onComplete;
     this.maxLogBytes = limits.maxLogBytes;
     this.maxRunning = limits.maxRunning;
+    this.logs = logs;
   }
 
   get active(): boolean {
@@ -142,7 +151,14 @@ export class JobManager {
 
   output(id: string, maxBytes = MAX_OUTPUT_BYTES): OutputSnapshot {
     const job = this.requireJob(id);
-    const fd = openSync(job.output_path, "r");
+    let fd;
+    try { fd = openSync(job.output_path, "r"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const reason = this.logs?.wasCollected?.(job.output_path) ? "was reclaimed by log retention" : "is missing";
+        throw new Error(`Full output for ${id} ${reason}. The task status and saved completion message are unchanged.`);
+      }
+      throw error;
+    }
     try {
       const size = fstatSync(fd).size;
       const length = Math.min(size, maxBytes);
@@ -228,7 +244,7 @@ export class JobManager {
     if (options.signal?.aborted) throw new Error("aborted");
     if ([...this.jobs.values()].filter(job => job.status === "running").length >= this.maxRunning) throw new Error(`At most ${this.maxRunning} bash jobs may run concurrently`);
 
-    this.logDirectory ??= mkdtempSync(join(tmpdir(), "pi-background-bash-"));
+    this.logDirectory ??= this.logs?.directory() ?? mkdtempSync(join(tmpdir(), "pi-background-bash-"));
     const id = `job-${randomUUID().slice(0, 8)}`;
     const outputPath = join(this.logDirectory, `${id}.log`);
     const fd = openSync(outputPath, "wx", 0o600);
@@ -250,6 +266,7 @@ export class JobManager {
       },
     };
     this.jobs.set(id, job);
+    try { this.logs?.created(this.snapshot(job), options.toolCallId); } catch (error) { console.error("[pi-background-bash] Log registration failed:", error); }
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
     // 原生后端仍拥有 shell、PID 和进程树；这里只改变等待方式及日志归属。
@@ -292,6 +309,7 @@ export class JobManager {
         job.detach();
         job.onData = undefined;
         closeSync(fd);
+        try { this.logs?.finished(this.snapshot(job)); } catch (error) { console.error("[pi-background-bash] Log completion indexing failed:", error); }
         // 状态和日志落定后通知，完成回调可以直接查询或停止同一任务。
         queueMicrotask(() => this.notify(job));
         this.prune();
