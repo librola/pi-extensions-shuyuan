@@ -144,16 +144,35 @@ test("软超时不终止进程，同一命令只执行一次，后续输出仍�
   assert.equal(jobs.output(id).output, "oncedone");
 });
 
+test("硬时限元数据在前台、手动移交及结束后保持配置值，无时限则省略字段", async t => {
+  const { jobs } = manager();
+  t.after(() => jobs.shutdown());
+  const running = jobs.run("sleep 5", process.cwd(), { autoBackground: false, hardTimeout: 3660.25 });
+  void running.catch(() => {});
+  const foreground = jobs.list()[0]!;
+  assert.equal(foreground.background, false);
+  assert.equal(foreground.hard_timeout, 3660.25);
+  const handoff = assert.rejects(running, Backgrounded);
+  const id = jobs.background(foreground.id);
+  await handoff;
+  assert.equal(jobs.get(id).hard_timeout, 3660.25);
+  assert.equal((await jobs.stop(id)).hard_timeout, 3660.25);
+  await jobs.run("printf no-limit", process.cwd());
+  assert.equal(Object.hasOwn(jobs.list().at(-1)!, "hard_timeout"), false);
+});
+
 test("后台任务不受原工具轮次后续取消影响，硬超时仍然生效", async t => {
   const { jobs, notices } = manager();
   t.after(() => jobs.shutdown());
   const controller = new AbortController();
   const id = await start(jobs, "printf alive; sleep 5", { signal: controller.signal, hardTimeout: 0.15 });
+  assert.equal(jobs.get(id).hard_timeout, 0.15);
   controller.abort();
   await delay(30);
   assert.equal(jobs.get(id).status, "running");
   await until(() => notices.length === 1);
   assert.equal(jobs.get(id).status, "timed_out");
+  assert.equal(jobs.get(id).hard_timeout, 0.15);
   assert.equal(jobs.get(id).exit_code, undefined);
   assert.equal(jobs.output(id).output, "alive");
 });

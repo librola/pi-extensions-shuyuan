@@ -108,6 +108,44 @@ test("CLI 摘要只计后台运行任务，命令展开的是同一个 widget �
   assert.equal(e.customCalls, 0);
 });
 
+test("运行时长显示时分秒，零单位省略，刚启动和未来时间不显示负数", t => {
+  const now = 1_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  const e = uiHarness();
+  const snapshots = jobs();
+  const view = createJobsWidget(e.ctx, () => snapshots);
+  t.after(() => { view.dispose(); e.tui.stop(); });
+  view.show();
+  const widget = e.widgets.get("pi-background-bash")!;
+  const cases: Array<[number, string]> = [
+    [0, "<1s"], [999, "<1s"], [1000, "1s"], [59_999, "59s"], [60_000, "1m"],
+    [3_600_000, "1h"], [3_601_000, "1h 1s"], [3_661_000, "1h 1m 1s"], [7_200_000, "2h"], [-1000, "<1s"],
+  ];
+  for (const [milliseconds, duration] of cases) {
+    snapshots[0]!.started_at = now - milliseconds;
+    assert.equal(widget.render(120)[2], `job-00000000 BG running ${duration}`);
+  }
+});
+
+test("硬时限单独标注配置总时长，省略零单位并保留小数秒", t => {
+  const now = 1_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  const e = uiHarness();
+  const snapshots = jobs();
+  snapshots[0]!.started_at = now - 3_723_000;
+  const view = createJobsWidget(e.ctx, () => snapshots);
+  t.after(() => { view.dispose(); e.tui.stop(); });
+  view.show();
+  const widget = e.widgets.get("pi-background-bash")!;
+  const cases: Array<[number, string]> = [[7200, "2h"], [3723.25, "1h 2m 3.25s"], [60.5, "1m 0.5s"], [0.25, "0.25s"]];
+  for (const [seconds, limit] of cases) {
+    snapshots[0]!.hard_timeout = seconds;
+    assert.equal(widget.render(120)[2], `job-00000000 BG running 1h 2m 3s · hard limit ${limit}`);
+  }
+  delete snapshots[0]!.hard_timeout;
+  assert.equal(widget.render(120)[2], "job-00000000 BG running 1h 2m 3s");
+});
+
 test("widget 的窄屏、分页和控制字符安全，导航不修改任务数据", t => {
   const previousKeys = getKeybindings();
   setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
@@ -290,13 +328,14 @@ test("RPC 命令提供 widget，不再只是数量状态或文本通知", async 
   const h = harness();
   t.after(() => h.close());
   await h.emit("session_start"); h.ctx.isIdle = () => false;
-  const result = await h.call("bash", { command: "sleep 5; printf done", background: true });
+  const result = await h.call("bash", { command: "sleep 5; printf done", background: true, hard_timeout: 3600 });
   const id = object(result.structuredContent).job_id;
   await h.commands.get("bash-jobs").handler("", h.ctx);
   const factory = h.widgets.get("pi-background-bash")!.content as (tui: TUI, theme: Theme) => Component & { dispose?(): void };
   const widget = factory({ terminal: { rows: 4, columns: 80 }, requestRender() {} } as unknown as TUI,
     { fg: (_color: string, text: string) => text } as Theme);
   assert.ok(widget.render(80).join("\n").includes(id));
+  assert.ok(widget.render(80).join("\n").includes("hard limit 1h"));
   assert.equal(h.statuses.get("pi-background-bash"), undefined);
   assert.deepEqual(h.notifications, []);
   assert.equal(h.messages.length, 0);

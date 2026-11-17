@@ -8,6 +8,18 @@ import type { JobSnapshot } from "./jobs.ts";
 export const JOBS_WIDGET_SHORTCUT = "ctrl+shift+j";
 const WIDGET_KEY = "pi-background-bash";
 
+function formatDuration(seconds: number): string {
+  if (seconds <= 0) return "<1s";
+  if (seconds < 60) return `${seconds}s`;
+  const wholeSeconds = Math.floor(seconds);
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor(wholeSeconds / 60) % 60;
+  // 硬时限允许小数秒，从配置值的十进制表示取小数，避免浮点取余产生尾数噪声。
+  const fraction = String(seconds).split(".")[1];
+  const remainder = `${wholeSeconds % 60}${fraction ? `.${fraction}` : ""}`;
+  return [hours ? `${hours}h` : "", minutes ? `${minutes}m` : "", Number(remainder) ? `${remainder}s` : ""].filter(Boolean).join(" ");
+}
+
 class JobsWidget implements Component {
   // 原生 TUI 实现提供公开焦点查询；通用工厂类型未声明它，RPC 虚拟 TUI 也不一定提供。
   private readonly tui: TUI & { getFocusedComponent?(): Component | null };
@@ -70,8 +82,9 @@ class JobsWidget implements Component {
     const now = Date.now();
     const lines = [heading, this.theme.fg("dim", "BG: background · read-only")];
     for (const job of shown) {
-      const elapsed = Math.max(0, (now - job.started_at) / 1000).toFixed(1);
-      lines.push(`${job.id} BG running ${elapsed}s`);
+      const elapsed = formatDuration(Math.max(0, Math.floor((now - job.started_at) / 1000)));
+      const hardLimit = job.hard_timeout !== undefined ? ` · hard limit ${formatDuration(job.hard_timeout)}` : "";
+      lines.push(`${job.id} BG running ${elapsed}${hardLimit}`);
       // 命令是数据，不能让控制字符变成终端指令；按显示列截断，保留完整字符。
       lines.push(this.theme.fg("muted", `  ${truncateToWidth(replaceControlCharacters(job.command), 200)}`));
     }

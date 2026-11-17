@@ -16,6 +16,8 @@ export type JobSnapshot = {
   cwd: string;
   status: JobStatus;
   background: boolean;
+  // 命令整体执行的硬时限，单位秒；移交后台不会重置它。
+  hard_timeout?: number;
   started_at: number;
   ended_at?: number;
   exit_code?: number;
@@ -142,6 +144,7 @@ export class JobManager {
     return {
       id: job.id, command: job.command, cwd: job.cwd, status: job.status,
       background: job.background, started_at: job.started_at,
+      ...(job.hard_timeout !== undefined ? { hard_timeout: job.hard_timeout } : {}),
       ...(job.ended_at !== undefined ? { ended_at: job.ended_at } : {}),
       ...(job.exit_code !== undefined ? { exit_code: job.exit_code } : {}),
       ...(job.error ? { error: job.error } : {}),
@@ -257,6 +260,7 @@ export class JobManager {
     const onAbort = () => { job.stopReason = "stopped"; controller.abort(); };
     const job: Job = {
       id, command: options.displayCommand ?? command, cwd, status: "running", background: false, started_at: Date.now(),
+      hard_timeout: options.hardTimeout,
       output_path: outputPath, output_bytes: 0, controller,
       done: Promise.resolve({}), handoff: resolveHandoff, onData: options.onData,
       returned: false, notified: false,
