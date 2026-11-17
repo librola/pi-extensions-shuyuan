@@ -9,16 +9,66 @@ function object(value: unknown): Record<string, any> {
   return value as Record<string, any>;
 }
 
-test("Bash 描述首句与原版一致，默认等待在工具描述和参数中均为 180 秒", async t => {
+test("Bash 文案按当前默认生成，数值只放 timeout 参数，工厂不读取未绑定的设置", async t => {
+  let settingsReads = 0;
+  const h = harness({ get settings() { settingsReads++; return {}; } });
+  t.after(() => h.close());
+  assert.equal(settingsReads, 0);
+  assert.ok(h.tools.get("bash")!.description.startsWith("Execute a bash command in the current working directory."));
+  await h.emit("session_start");
+  const bash = h.tools.get("bash")!;
+  assert.match(bash.description, /commands that exceed timeout continue in the background/);
+  assert.doesNotMatch(bash.description, /180|TUI|RPC|backgroundBash/);
+  assert.match(object(bash.parameters).properties.timeout.description, /default: 180s/);
+  assert.doesNotMatch(object(bash.parameters).properties.timeout.description, /disabled|print|JSON/);
+});
+
+test("文案跟随有效设置变更，关闭状态不解释自动后台，恢复后显示新默认", async t => {
+  const settings = { backgroundBash: { autoBackground: true, defaultTimeoutSeconds: 60 } };
+  const h = harness({ settings });
+  t.after(() => h.close());
+  await h.emit("session_start");
+  const first = h.tools.get("bash")!;
+  assert.match(object(first.parameters).properties.timeout.description, /default: 60s/);
+  await h.emit("before_agent_start", h.ctx, { systemPromptOptions: { toolGuidelines: { bash: first.promptGuidelines } } });
+  assert.equal(h.tools.get("bash"), first, "配置没变时不重复注册工具");
+  settings.backgroundBash.autoBackground = false;
+  await h.emit("before_agent_start", h.ctx, { systemPromptOptions: { toolGuidelines: { bash: first.promptGuidelines } } });
+  const disabled = h.tools.get("bash")!;
+  assert.match(disabled.description, /stay in the foreground/);
+  assert.doesNotMatch(disabled.description, /commands that exceed timeout|default:|60s|180s/);
+  assert.match(object(disabled.parameters).properties.timeout.description, /Execution timeout.*no default timeout/);
+  assert.doesNotMatch(object(disabled.parameters).properties.timeout.description, /background|Unused|print|JSON/);
+  assert.match(object(disabled.parameters).properties.background.description, /immediately/);
+  settings.backgroundBash.autoBackground = true;
+  settings.backgroundBash.defaultTimeoutSeconds = 0.5;
+  await h.emit("before_agent_start", h.ctx, { systemPromptOptions: { toolGuidelines: { bash: disabled.promptGuidelines } } });
+  assert.match(object(h.tools.get("bash")!.parameters).properties.timeout.description, /default: 0\.5s/);
+});
+
+test("首轮刷新同步自己的提示词规则，保留其他扩展规则和已选择工具", async t => {
   const h = harness();
   t.after(() => h.close());
-  const bash = h.tools.get("bash")!;
-  assert.ok(bash.description.startsWith("Execute a bash command in the current working directory."));
-  assert.match(bash.description, /default 180s/);
-  assert.match(object(bash.parameters).properties.timeout.description, /default 180s/);
-  assert.match(bash.description, /backgroundBash\.defaultTimeoutSeconds/);
-  assert.match(object(bash.parameters).properties.timeout.description, /backgroundBash\.defaultTimeoutSeconds/);
-  assert.match(bash.description, /backgroundBash\.autoBackground=false/);
+  const previous = h.tools.get("bash")!.promptGuidelines!;
+  const options = { toolGuidelines: { bash: [...previous, "Keep another extension's rule."] }, selectedTools: ["bash_jobs"] };
+  await h.emit("before_agent_start", h.ctx, { systemPromptOptions: options });
+  assert.deepEqual(options.toolGuidelines.bash, [...h.tools.get("bash")!.promptGuidelines!, "Keep another extension's rule."]);
+  assert.deepEqual(options.selectedTools, ["bash_jobs"]);
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.widgets.size, 0);
+});
+
+test("关闭状态忽略无关非法默认等待值，非法状态的文案不冒充正常默认", async t => {
+  const h = harness({ settings: { backgroundBash: { autoBackground: false, defaultTimeoutSeconds: "invalid" } } });
+  t.after(() => h.close());
+  await h.emit("session_start");
+  assert.match(object(h.tools.get("bash")!.parameters).properties.timeout.description, /no default timeout/);
+  assert.equal(object((await h.call("bash", { command: "printf works" })).structuredContent).output, "works");
+  const invalid = harness({ settings: { backgroundBash: { defaultTimeoutSeconds: 0 } } });
+  t.after(() => invalid.close());
+  await invalid.emit("session_start");
+  assert.match(invalid.tools.get("bash")!.description, /configured default wait is invalid/);
+  assert.doesNotMatch(object(invalid.tools.get("bash")!.parameters).properties.timeout.description, /default: 180s/);
 });
 
 test("前台成功和非零退出保持 Pi 原生 structuredContent 与错误标记", async t => {
@@ -64,10 +114,13 @@ test("有效配置可关闭自动移交，显式后台仍可用，非法开关�
   const h = harness({ settings });
   t.after(() => h.close());
   await h.emit("session_start");
-  const foreground = await h.call("bash", { command: "sleep 0.04; printf foreground", timeout: 0.001 });
-  assert.equal(object(foreground.structuredContent).output, "foreground");
-  assert.equal(object(foreground.structuredContent).job_id, undefined);
+  await assert.rejects(h.call("bash", { command: "sleep 0.15; printf should-not-run", timeout: 0.03 }), /Command timed out after 0\.03 seconds/);
   assert.equal(h.messages.length, 0);
+  const stopped = object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs[0];
+  assert.equal(stopped.status, "timed_out");
+  assert.equal(stopped.hard_timeout, 0.03);
+  const noLimit = await h.call("bash", { command: "sleep 0.04; printf foreground" });
+  assert.equal(object(noLimit.structuredContent).output, "foreground");
   settings.backgroundBash.autoBackground = "false";
   const count = object((await h.call("bash_jobs", { action: "list" })).structuredContent).jobs.length;
   await assert.rejects(h.call("bash", { command: "printf must-not-run", timeout: 0.01 }), /backgroundBash\.autoBackground/);
@@ -75,6 +128,37 @@ test("有效配置可关闭自动移交，显式后台仍可用，非法开关�
   const background = await h.call("bash", { command: "sleep 5", background: true });
   assert.equal(object(background.structuredContent).status, "running");
   await h.call("bash_jobs", { action: "stop", id: object(background.structuredContent).job_id });
+});
+
+test("运行中的命令保持原时限，刷新文案不终止或重跑旧命令", async t => {
+  const settings = { backgroundBash: { autoBackground: true } };
+  const h = harness({ settings });
+  t.after(() => h.close());
+  await h.emit("session_start"); h.ctx.isIdle = () => false;
+  const pending = h.call("bash", { command: "sleep 5", timeout: 0.03 });
+  settings.backgroundBash.autoBackground = false;
+  await h.emit("before_agent_start", h.ctx, { systemPromptOptions: { toolGuidelines: { bash: h.tools.get("bash")!.promptGuidelines } } });
+  const result = await pending;
+  const id = object(result.structuredContent).job_id;
+  const job = object((await h.call("bash_jobs", { action: "status", id })).structuredContent).job;
+  assert.equal(job.status, "running");
+  assert.equal(job.hard_timeout, undefined);
+  assert.match(h.tools.get("bash")!.description, /stay in the foreground/);
+  await h.call("bash_jobs", { action: "stop", id });
+});
+
+test("关闭自动移交时，主动后台的 timeout 仍限制执行，hard_timeout 优先", async t => {
+  const h = harness({ settings: { backgroundBash: { autoBackground: false } } });
+  t.after(() => h.close());
+  await h.emit("session_start"); h.ctx.isIdle = () => false;
+  const result = await h.call("bash", { command: "printf begin; sleep 5", background: true, timeout: 0.05 });
+  const id = object(result.structuredContent).job_id;
+  await until(() => h.messages.length === 1);
+  assert.equal(h.messages[0]!.message.details.status, "timed_out");
+  assert.equal(h.messages[0]!.message.details.hard_timeout, 0.05);
+  assert.equal(object((await h.call("bash_jobs", { action: "status", id })).structuredContent).job.status, "timed_out");
+  const precedence = await h.call("bash", { command: "sleep 0.04; printf precedence", timeout: 0.001, hard_timeout: 1 });
+  assert.equal(object(precedence.structuredContent).output, "precedence");
 });
 
 test("非法默认配置不启动命令，主动后台与显式等待不依赖默认配置", async t => {
@@ -327,7 +411,11 @@ test("print/JSON 模式不自动后台，保留原生硬超时，拒绝无法通
     const h = harness({ mode });
     t.after(() => h.close());
     await h.emit("session_start");
-    await assert.rejects(h.call("bash", { command: "printf no", background: true }), /persistent TUI\/RPC/);
+    await assert.rejects(h.call("bash", { command: "printf no", background: true }), /Background execution is unavailable/);
+    const description = h.tools.get("bash")!;
+    assert.doesNotMatch(description.description, /background|TUI|RPC/);
+    assert.match(object(description.parameters).properties.timeout.description, /Execution timeout.*no default timeout/);
+    assert.equal(description.promptGuidelines?.some(rule => rule.includes("background=true")), false);
     await assert.rejects(h.call("bash", { command: "sleep 5", timeout: 0.03 }), /timed out/);
     const result = await h.call("bash", { command: "sleep 0.04; printf done" });
     assert.equal(object(result.structuredContent).output, "done");

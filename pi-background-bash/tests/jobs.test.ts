@@ -78,24 +78,35 @@ test("默认前台等待为 180 秒，超时移交不终止或重跑命令", asy
   await jobs.stop(id);
 });
 
-test("关闭自动移交后超过软等待仍前台完成，不发送后台通知", async t => {
+test("关闭自动移交后 timeout 按执行时限终止命令，不发送后台通知", async t => {
   const { jobs, notices } = manager();
   t.after(() => jobs.shutdown());
-  const result = await jobs.run("printf once; sleep 0.04; printf done", process.cwd(), { autoBackground: false, timeout: 0.005 });
-  assert.equal(result.exitCode, 0);
+  await assert.rejects(jobs.run("printf once; sleep 0.15; printf should-not-run", process.cwd(), { autoBackground: false, timeout: 0.03 }), /timeout:0\.03/);
   const job = jobs.list()[0]!;
   assert.equal(job.background, false);
-  assert.equal(job.status, "completed");
-  assert.equal(jobs.output(job.id).output, "oncedone");
+  assert.equal(job.status, "timed_out");
+  assert.equal(job.hard_timeout, 0.03);
+  assert.equal(jobs.output(job.id).output, "once");
   assert.deepEqual(notices, []);
+});
+
+test("关闭自动移交且未给 timeout 时不使用默认时限，hard_timeout 优先于 timeout", async t => {
+  const { jobs } = manager();
+  t.after(() => jobs.shutdown());
+  assert.equal((await jobs.run("sleep 0.04; printf no-default", process.cwd(), { autoBackground: false })).exitCode, 0);
+  assert.equal(jobs.list()[0]!.hard_timeout, undefined);
+  assert.equal((await jobs.run("sleep 0.04; printf precedence", process.cwd(), { autoBackground: false, timeout: 0.001, hardTimeout: 1 })).exitCode, 0);
+  assert.equal(jobs.list().at(-1)!.hard_timeout, 1);
 });
 
 test("关闭自动移交不禁止主动后台、手动移交或硬超时", async t => {
   const { jobs } = manager();
   t.after(() => jobs.shutdown());
-  const explicit = await start(jobs, "sleep 5", { autoBackground: false });
+  const explicit = await start(jobs, "printf alive; sleep 5", { autoBackground: false, timeout: 0.03 });
   assert.equal(jobs.get(explicit).background, true);
-  await jobs.stop(explicit);
+  await until(() => jobs.get(explicit).status === "timed_out");
+  assert.equal(jobs.get(explicit).hard_timeout, 0.03);
+  assert.equal(jobs.output(explicit).output, "alive");
   const running = jobs.run("sleep 5", process.cwd(), { autoBackground: false });
   const handoff = assert.rejects(running, error => error instanceof Backgrounded && error.reason === "manual");
   const manual = jobs.background();
@@ -105,6 +116,20 @@ test("关闭自动移交不禁止主动后台、手动移交或硬超时", async
   await assert.rejects(jobs.run("sleep 5", process.cwd(), { autoBackground: false, timeout: 0.001, hardTimeout: 0.03 }), /timeout:0\.03/);
   assert.equal(jobs.list().at(-1)!.status, "timed_out");
   assert.equal(jobs.list().at(-1)!.background, false);
+});
+
+test("关闭自动移交时，手动转后台不重置 timeout 的执行时限", async t => {
+  const { jobs, notices } = manager();
+  t.after(() => jobs.shutdown());
+  const running = jobs.run("printf begin; sleep 5", process.cwd(), { autoBackground: false, timeout: 0.1 });
+  const handoff = assert.rejects(running, Backgrounded);
+  await until(() => jobs.list()[0]!.output_bytes > 0);
+  const id = jobs.background();
+  await handoff; jobs.returned(id);
+  await until(() => notices.length === 1);
+  assert.equal(jobs.get(id).status, "timed_out");
+  assert.equal(jobs.get(id).hard_timeout, 0.1);
+  assert.equal(jobs.output(id).output, "begin");
 });
 
 test("主动后台立即移交，完成后只通知一次，完整日志权限为 0600", async t => {

@@ -50,6 +50,8 @@ export function harness(options: { cwd?: string; sessionId?: string; mode?: "rpc
     registerShortcut: (name: string, shortcut: any) => shortcuts.set(name, shortcut),
     sendMessage: (message: any, delivery: any) => messages.push({ message, options: delivery }),
     getSettings: () => options.settings ?? {},
+    getActiveTools: () => [...tools.keys()],
+    setActiveTools: () => {},
   } as unknown as ExtensionAPI;
   extension(api);
   const emit = async (event: string, eventContext: ExtensionContext = ctx, data: Record<string, unknown> = {}) => {

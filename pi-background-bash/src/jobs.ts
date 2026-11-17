@@ -244,6 +244,8 @@ export class JobManager {
     if (!command.trim()) throw new Error("command must not be empty");
     validateSeconds(options.timeout, "timeout");
     validateSeconds(options.hardTimeout, "hard_timeout");
+    // 关闭自动移交后恢复原生 timeout 执行时限；显式 hard_timeout 始终优先。
+    const hardTimeout = options.hardTimeout ?? (options.autoBackground === false ? options.timeout : undefined);
     if (options.signal?.aborted) throw new Error("aborted");
     if ([...this.jobs.values()].filter(job => job.status === "running").length >= this.maxRunning) throw new Error(`At most ${this.maxRunning} bash jobs may run concurrently`);
 
@@ -260,7 +262,7 @@ export class JobManager {
     const onAbort = () => { job.stopReason = "stopped"; controller.abort(); };
     const job: Job = {
       id, command: options.displayCommand ?? command, cwd, status: "running", background: false, started_at: Date.now(),
-      hard_timeout: options.hardTimeout,
+      hard_timeout: hardTimeout,
       output_path: outputPath, output_bytes: 0, controller,
       done: Promise.resolve({}), handoff: resolveHandoff, onData: options.onData,
       returned: false, notified: false,
@@ -277,7 +279,7 @@ export class JobManager {
     job.done = Promise.resolve().then(async (): Promise<Outcome> => {
       try {
         const result = await this.operations.exec(command, cwd, {
-          signal: controller.signal, timeout: options.hardTimeout, env: options.env,
+          signal: controller.signal, timeout: hardTimeout, env: options.env,
           onData: data => {
             if (job.status !== "running" || controller.signal.aborted) return;
             const remaining = this.maxLogBytes - job.output_bytes;
