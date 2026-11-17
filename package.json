@@ -1,6 +1,6 @@
 {
   "name": "pi-extensions-shuyuan",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "统一管理 Pi 错误恢复与受管后台 Bash 扩展",
